@@ -1,0 +1,17 @@
+[package]
+name = "bili-live"
+description = "In-house bilibili live room danmaku WebSocket client"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+bili-api = { path = "../bili-api" }
+bon = "3.10.2"
+brotli = "9.0.0"
+flate2 = "1.1.10"
+futures-util = "0.3.34"
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls", "rustls-tls-webpki-roots"] }

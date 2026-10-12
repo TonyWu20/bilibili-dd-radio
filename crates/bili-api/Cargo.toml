@@ -1,0 +1,17 @@
+[package]
+name = "bili-api"
+description = "In-house bilibili HTTP API client (rooms, play URL, WBI, login)"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+bon = "3.10.2"
+dirs = "7.0.0"
+md-5 = "0.11.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["charset", "json", "rustls", "http2"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+uuid = { version = "1.28.0", features = ["v4"] }

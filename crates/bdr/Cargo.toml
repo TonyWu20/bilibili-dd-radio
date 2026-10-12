@@ -1,0 +1,25 @@
+[package]
+edition = "2024"
+name = "bdr"
+description = "bilibili-danmaku radio: TUI for listening to bilibili live rooms"
+
+[[bin]]
+name = "bdr"
+path = "src/main.rs"
+
+[dependencies]
+
+bili-api = { path = "../bili-api" }
+bili-live = { path = "../bili-live" }
+bili-audio = { path = "../bili-audio" }
+anyhow = "1.0.104"
+clap = { workspace = true }
+serde_json = "1.0"
+tui-textarea = "0.7.0"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "process", "signal"] }
+ratatui = "0.30.2"
+ratatui-crossterm = "0.1.1"
+crossterm = "0.29.0"
+
+[dev-dependencies]
+insta = "1.48"
