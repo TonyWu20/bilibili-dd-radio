@@ -66,6 +66,7 @@ mod tests {
         let mut app = App::new(api, None, None);
         app.rooms.push(fake_room("6"));
         app.rooms.push(fake_room("7"));
+        app.last_width = 80;
         assert_eq!(app.focused, 0);
 
         app.move_focus(1, 0);

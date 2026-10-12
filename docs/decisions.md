@@ -202,15 +202,20 @@ Record of user decisions and technical findings. Newest first.
   height. 2 rows take 50:50. The last row and the last cell take
   the rounding remainder. A lone room in a row takes the full row
   width.
-- `move_focus` uses the same count-based rows. Left/right cycle
-  rooms in row-major order. Up/down wrap rows and clamp to the
-  rooms in the target row.
-- New snapshot: `snap_grid_four_rooms_two_rows`.
+- A width cap sits on top of the count rule. A row holds at most
+  `(width - 4) / 28` rooms, each cell wanting 28 columns. So a
+  narrow terminal shrinks the rows: 80 columns give rows of two.
+  Wide terminals keep the count rule.
+- `move_focus` uses the same count and width caps. Left/right
+  cycle rooms in row-major order. Up/down wrap rows and clamp to
+  the rooms in the target row.
+- Snapshots: `snap_grid_four_rooms_two_rows` (wide) and
+  `snap_grid_narrow_four_rooms` (80 columns, rows of two).
 
 
 ## Testing commands
 
-- `cargo test` (whole workspace, 39 tests).
+- `cargo test` (whole workspace, 40 tests).
 - `cargo insta test -p bdr && cargo insta review` (snapshot gate).
 - `cargo run -p bdr -- audio-local --port 7891` (run the audio
   runner, then point a TUI at it with

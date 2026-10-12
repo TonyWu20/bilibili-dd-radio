@@ -36,6 +36,8 @@ pub struct App {
     pub prompt: String,
     /// The last status or error line, shown in the status bar.
     pub status: Option<String>,
+    /// The terminal width of the last draw, for key navigation.
+    pub last_width: u16,
     /// Results of the async open pipeline.
     open_rx: mpsc::UnboundedReceiver<OpenMsg>,
     open_tx: mpsc::UnboundedSender<OpenMsg>,
@@ -60,6 +62,7 @@ impl App {
             view: View::Grid,
             prompt: String::new(),
             status: None,
+            last_width: 80,
             open_rx,
             open_tx,
             remote,
@@ -70,10 +73,14 @@ impl App {
 
     /// The number of rooms in one grid row.
     ///
-    /// Three rooms or fewer sit in one row. Beyond that, rows of
-    /// three begin.
-    pub fn grid_cols(rooms: usize) -> usize {
-        rooms.clamp(1, 3)
+    /// The count rule: three rooms or fewer sit in one row.
+    /// Beyond that, rows of three begin. A width-based cap shrinks
+    /// the row when the terminal is narrow. Each cell wants 28
+    /// columns.
+    pub fn grid_cols(rooms: usize, width: u16) -> usize {
+        let count_cap = rooms.clamp(1, 3);
+        let width_cap = ((width as usize).saturating_sub(4)) / 28;
+        count_cap.min(width_cap).max(1)
     }
 
     /// Request opening a room from user input.
@@ -148,7 +155,7 @@ impl App {
         if n == 0 {
             return;
         }
-        let cols = Self::grid_cols(n) as i32;
+        let cols = Self::grid_cols(n, self.last_width) as i32;
         if dx != 0 {
             self.focused = (self.focused as i32 + dx).rem_euclid(n as i32) as usize;
             return;

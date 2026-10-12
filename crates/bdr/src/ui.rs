@@ -17,7 +17,8 @@ pub fn draw<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<(), B::Error> {
-    let _ = terminal.size()?;
+    let size = terminal.size()?;
+    app.last_width = size.width;
     terminal.draw(|f| {
         let area = f.area();
         let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(1)])
@@ -47,7 +48,7 @@ fn draw_grid(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let n = app.rooms.len();
-    let cols = App::grid_cols(n);
+    let cols = App::grid_cols(n, area.width);
     let rows = n.div_ceil(cols);
 
     // Rows and cells split their span evenly. The last row and the

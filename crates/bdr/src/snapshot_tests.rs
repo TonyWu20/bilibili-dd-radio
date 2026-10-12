@@ -31,7 +31,11 @@ const H: u16 = 30;
 // ── shared harness ──────────────────────────────────────────────────
 
 fn render(app: &mut App) -> String {
-    let backend = TestBackend::new(W, H);
+    render_at(app, W, H)
+}
+
+fn render_at(app: &mut App, w: u16, h: u16) -> String {
+    let backend = TestBackend::new(w, h);
     let mut term = Terminal::new(backend).expect("test backend");
     let _ = ui::draw(&mut term, app);
     term.backend().to_string()
@@ -118,6 +122,18 @@ fn snap_room_audio_gone() {
     room.apply_audio(AudioEvent::Gone("mpv: not found".into()));
     assert_eq!(room.audio_state, AudioState::Dead("mpv: not found".into()));
     let out = render(&mut app);
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn snap_grid_narrow_four_rooms() {
+    // 80 columns cap the row at two cells. The four rooms sit in
+    // two even rows of two.
+    let mut app = app_with_room();
+    app.rooms.push(room_with("7"));
+    app.rooms.push(room_with("8"));
+    app.rooms.push(room_with("9"));
+    let out = render_at(&mut app, 80, H);
     insta::assert_snapshot!(out);
 }
 
