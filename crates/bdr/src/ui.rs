@@ -2,7 +2,7 @@
 
 
 use ratatui::backend::Backend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::text::Line;
@@ -17,8 +17,7 @@ pub fn draw<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<(), B::Error> {
-    let size = terminal.size()?;
-    app.last_width = size.width;
+    let _ = terminal.size()?;
     terminal.draw(|f| {
         let area = f.area();
         let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(1)])
@@ -47,39 +46,36 @@ fn draw_grid(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(Paragraph::new(text).block(Block::bordered().title(" rooms ")), area);
         return;
     }
-    let cols = App::grid_cols(area.width);
-    let rows = app.rooms.len().div_ceil(cols);
-    let cell_h = (area.height / rows as u16).clamp(5, 7);
+    let n = app.rooms.len();
+    let cols = App::grid_cols(n);
+    let rows = n.div_ceil(cols);
 
-    // Build the row rects by hand so the last row can grow to fill.
-    let mut rows_layout: Vec<Rect> = Vec::new();
+    // Rows and cells split their span evenly. The last row and the
+    // last cell in a row take the rounding remainder.
+    let row_h = area.height / rows as u16;
     let mut y = area.y;
     for r in 0..rows {
-        let h = if r == rows - 1 {
+        let h = if r + 1 == rows {
             (area.y + area.height).saturating_sub(y)
         } else {
-            cell_h
+            row_h
         };
-        rows_layout.push(Rect::new(area.x, y, area.width, h));
-        y += h;
-    }
-
-    for (row_idx, row_area) in rows_layout.iter().enumerate() {
-        let cell_constraints: Vec<Constraint> = (0..cols)
-            .map(|_| Constraint::Min(28))
-            .collect();
-        let cells: Vec<Rect> = Layout::horizontal(cell_constraints)
-            .direction(Direction::Horizontal)
-            .split(*row_area)
-            .to_vec();
-        for (col_idx, cell_area) in cells.iter().enumerate() {
-            let idx = row_idx * cols + col_idx;
-            if idx >= app.rooms.len() {
-                break;
-            }
+        let row_cells = cols.min(n - r * cols);
+        let cell_w = area.width / row_cells as u16;
+        let mut x = area.x;
+        for c in 0..row_cells {
+            let w = if c + 1 == row_cells {
+                (area.x + area.width).saturating_sub(x)
+            } else {
+                cell_w
+            };
+            let cell = Rect::new(x, y, w, h);
+            let idx = r * cols + c;
             let focused = idx == app.focused && app.view == View::Grid;
-            draw_cell(f, &app.rooms[idx], *cell_area, focused);
+            draw_cell(f, &app.rooms[idx], cell, focused);
+            x += w;
         }
+        y += h;
     }
 }
 

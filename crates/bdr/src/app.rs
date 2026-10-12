@@ -36,8 +36,6 @@ pub struct App {
     pub prompt: String,
     /// The last status or error line, shown in the status bar.
     pub status: Option<String>,
-    /// The terminal size of the last draw, for key navigation.
-    pub last_width: u16,
     /// Results of the async open pipeline.
     open_rx: mpsc::UnboundedReceiver<OpenMsg>,
     open_tx: mpsc::UnboundedSender<OpenMsg>,
@@ -62,7 +60,6 @@ impl App {
             view: View::Grid,
             prompt: String::new(),
             status: None,
-            last_width: 80,
             open_rx,
             open_tx,
             remote,
@@ -71,11 +68,12 @@ impl App {
         }
     }
 
-    /// The grid column count for a terminal width.
-    pub fn grid_cols(width: u16) -> usize {
-        let per = 28usize;
-        let cols = ((width as usize).saturating_sub(4)) / per;
-        cols.clamp(1, 8)
+    /// The number of rooms in one grid row.
+    ///
+    /// Three rooms or fewer sit in one row. Beyond that, rows of
+    /// three begin.
+    pub fn grid_cols(rooms: usize) -> usize {
+        rooms.clamp(1, 3)
     }
 
     /// Request opening a room from user input.
@@ -150,7 +148,7 @@ impl App {
         if n == 0 {
             return;
         }
-        let cols = Self::grid_cols(self.last_width).max(1) as i32;
+        let cols = Self::grid_cols(n) as i32;
         if dx != 0 {
             self.focused = (self.focused as i32 + dx).rem_euclid(n as i32) as usize;
             return;

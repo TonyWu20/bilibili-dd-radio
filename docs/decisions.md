@@ -192,9 +192,25 @@ Record of user decisions and technical findings. Newest first.
   the normal pipeline.
 
 
+## 2026-11-05 session 5 (count-driven grid layout)
+
+- The grid is driven by the room count, not the terminal width.
+  Three rooms or fewer sit in one row. Each row holds at most
+  three rooms. 1 room takes 100% width. 2 take 50:50. 3 take
+  33:33:33. From 4 rooms, a second row begins.
+- Rows split the vertical span evenly. 1 row takes the full
+  height. 2 rows take 50:50. The last row and the last cell take
+  the rounding remainder. A lone room in a row takes the full row
+  width.
+- `move_focus` uses the same count-based rows. Left/right cycle
+  rooms in row-major order. Up/down wrap rows and clamp to the
+  rooms in the target row.
+- New snapshot: `snap_grid_four_rooms_two_rows`.
+
+
 ## Testing commands
 
-- `cargo test` (whole workspace, 38 tests).
+- `cargo test` (whole workspace, 39 tests).
 - `cargo insta test -p bdr && cargo insta review` (snapshot gate).
 - `cargo run -p bdr -- audio-local --port 7891` (run the audio
   runner, then point a TUI at it with

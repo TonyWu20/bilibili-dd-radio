@@ -60,7 +60,6 @@ fn room_with(input: &str) -> RoomState {
 
 fn app_with_room() -> App {
     let mut app = App::new(api(), None, None);
-    app.last_width = W;
     app.rooms.push(room_with("6"));
     app
 }
@@ -70,7 +69,6 @@ fn app_with_room() -> App {
 #[test]
 fn snap_empty_grid() {
     let mut app = App::new(api(), None, None);
-    app.last_width = W;
     let out = render(&mut app);
     insta::assert_snapshot!(out);
 }
@@ -119,6 +117,16 @@ fn snap_room_audio_gone() {
     let room = &mut app.rooms[0];
     room.apply_audio(AudioEvent::Gone("mpv: not found".into()));
     assert_eq!(room.audio_state, AudioState::Dead("mpv: not found".into()));
+    let out = render(&mut app);
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn snap_grid_four_rooms_two_rows() {
+    let mut app = app_with_room();
+    app.rooms.push(room_with("7"));
+    app.rooms.push(room_with("8"));
+    app.rooms.push(room_with("9"));
     let out = render(&mut app);
     insta::assert_snapshot!(out);
 }
@@ -178,7 +186,6 @@ async fn snap_status_remote_retrying() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let remote = RemoteAudio::supervised("127.0.0.1:1".parse().unwrap(), tx);
     let mut app = App::new(api(), Some(remote), None);
-    app.last_width = W;
     app.rooms.push(room_with("6"));
     app.status = Some("audio remote not connected, retrying".into());
     let out = render(&mut app);
