@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::app::{help_lines, App, View};
-use crate::room::{AudioState, Line as RoomLine};
+use crate::room::AudioState;
 
 /// Draw one frame on any backend.
 pub fn draw<B: Backend>(
@@ -151,17 +151,10 @@ fn draw_danmaku(f: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let mut lines: Vec<Line> = Vec::new();
+    // One renderer for both views. The grid trims to 26 chars.
+    // The danmaku view trims to 60.
     for line in room.last_lines(60) {
-        lines.push(match line {
-            RoomLine::Danmaku { user, text } => Line::raw(format!(
-                "{user} {}",
-                crate::room::truncate(text, 60)
-            )),
-            RoomLine::Gift { user, gift, num } => {
-                Line::raw(format!("[gift] {user} x{num} {gift}"))
-            }
-            RoomLine::System(s) => Line::raw(format!("* {s}")),
-        });
+        lines.push(Line::raw(line.short(60)));
     }
     let title = format!(
         "danmaku: {} — {} [audio: {}]",

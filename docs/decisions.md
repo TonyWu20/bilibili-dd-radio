@@ -181,6 +181,17 @@ Record of user decisions and technical findings. Newest first.
   failures on stderr for tunnel debugging.
 
 
+## 2026-11-05 session 4 (danmaku separator, multi-room start)
+
+- One line renderer for both views. The grid ticker and the
+  danmaku view both use `Line::short`. The grid trims to 26 chars.
+  The danmaku view trims to 60. Danmaku lines read `user: text`
+  in both views.
+- `bdr room` now takes several room refs at once:
+  `bdr room 6 7734200 https://...`. Each one is opened through
+  the normal pipeline.
+
+
 ## Testing commands
 
 - `cargo test` (whole workspace, 38 tests).

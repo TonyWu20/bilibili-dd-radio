@@ -37,10 +37,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Open the TUI with one room already added.
+    /// Open the TUI with the given rooms already added.
     Room {
-        /// Room id, short id, or room URL.
-        room_ref: String,
+        /// Room id, short id, or room URL. Give several to open
+        /// several rooms at once.
+        room_refs: Vec<String>,
         /// Play audio on this machine via a local runner.
         /// Give the address of the runner, e.g. `127.0.0.1:7888`.
         #[arg(long, value_name = "HOST:PORT")]
@@ -74,10 +75,12 @@ async fn main() -> Result<()> {
     match cli.cmd {
         Some(Cmd::Probe { room_ref, n, t }) => probe(&api, &room_ref, n, t).await,
         Some(Cmd::AudioLocal { port }) => audio_local::run_audio_local(port).await,
-        Some(Cmd::Room { room_ref, audio_remote }) => {
+        Some(Cmd::Room { room_refs, audio_remote }) => {
             let (remote, remote_rx) = remote_audio(&audio_remote)?;
             let mut app = app::App::new(api, remote, remote_rx);
-            app.open_room(room_ref);
+            for input in room_refs {
+                app.open_room(input);
+            }
             run_tui(app).await
         }
         None => {
