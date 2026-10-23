@@ -58,10 +58,7 @@ mod tests {
             parse_room_ref("https://live.bilibili.com/7734200").unwrap(),
             7734200
         );
-        assert_eq!(
-            parse_room_ref("http://live.bilibili.com/6").unwrap(),
-            6
-        );
+        assert_eq!(parse_room_ref("http://live.bilibili.com/6").unwrap(), 6);
         assert_eq!(parse_room_ref("live.bilibili.com/6").unwrap(), 6);
         assert_eq!(parse_room_ref("/6").unwrap(), 6);
         assert_eq!(

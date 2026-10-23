@@ -31,4 +31,4 @@ expression: out
 "│                                                                                                                      │"
 "│                                                                                                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" rooms: 4 | q quit · g add · m mute · d danmaku · x close · ? help                                                      "
+" rooms: 4 | q quit · g add · f follows · L login · m mute · d danmaku · x close · ? help                                "

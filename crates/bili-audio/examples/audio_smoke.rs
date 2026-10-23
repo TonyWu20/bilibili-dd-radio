@@ -11,7 +11,10 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let url = args.get(1).cloned().ok_or_else(|| anyhow::anyhow!("usage: audio_smoke <url> [secs]"))?;
+    let url = args
+        .get(1)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("usage: audio_smoke <url> [secs]"))?;
     let secs: u64 = args.get(2).map(|s| s.parse().unwrap_or(20)).unwrap_or(20);
     let socket = std::env::temp_dir().join(format!("bdr-audio-smoke-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&socket);
@@ -25,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     match start_result {
         Ok(mut handle) => {
             eprintln!("mpv started");
-            let mut deadline = tokio::time::sleep(Duration::from_secs(secs));
+            let deadline = tokio::time::sleep(Duration::from_secs(secs));
             tokio::pin!(deadline);
             loop {
                 tokio::select! {

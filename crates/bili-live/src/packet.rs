@@ -17,7 +17,7 @@
 
 use thiserror::Error;
 
-use crate::cmd::{parse_commands, Command};
+use crate::cmd::{Command, parse_commands};
 
 /// A framing or payload error.
 #[derive(Debug, Error)]
@@ -124,7 +124,6 @@ pub fn build_heartbeat_packet() -> Vec<u8> {
     .build(br"{}")
 }
 
-
 /// Walk all outer frames in a raw WebSocket payload.
 ///
 /// For each frame, the callback gets the header and the body slice.
@@ -194,11 +193,10 @@ pub fn decode_business(ver: u16, body: &[u8]) -> Result<Vec<Command>, Error> {
 }
 
 fn parse_json_business(body: &[u8]) -> Vec<Command> {
-    let value: serde_json::Value =
-        match serde_json::from_slice(body) {
-            Ok(v) => v,
-            Err(_) => return Vec::new(),
-        };
+    let value: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
     parse_commands(&value)
 }
 
@@ -237,7 +235,8 @@ mod tests {
 
     #[test]
     fn test_plain_json_business() {
-        let json = br#"{"cmd":"DANMU_MSG","danmus":[["hi",[0,255,255,1700000000,123,"alice",1],255]]}"#;
+        let json =
+            br#"{"cmd":"DANMU_MSG","danmus":[["hi",[0,255,255,1700000000,123,"alice",1],255]]}"#;
         let cmds = decode_business(0, json).unwrap();
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].cmd, "DANMU_MSG");
@@ -282,7 +281,7 @@ mod tests {
         use std::io::Write;
         compressor.write_all(&frame).unwrap();
         let compressed = compressor.into_inner();
-        let cmds = decode_business(3, &compressed).unwrap();
+        let cmds = decode_business(3, compressed).unwrap();
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].cmd, "ONLINE_RANK_COUNT");
     }

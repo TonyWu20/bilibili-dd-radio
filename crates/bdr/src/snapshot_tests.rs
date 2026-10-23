@@ -15,10 +15,10 @@
 
 #![cfg(test)]
 
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 
-use crate::app::{App, View};
+use crate::app::{App, Following, LoginSession, View};
 use crate::audio_remote::RemoteAudio;
 use bili_audio::AudioEvent;
 
@@ -63,7 +63,7 @@ fn room_with(input: &str) -> RoomState {
 }
 
 fn app_with_room() -> App {
-    let mut app = App::new(api(), None, None);
+    let mut app = App::new(api(), None, None, None);
     app.rooms.push(room_with("6"));
     app
 }
@@ -72,7 +72,7 @@ fn app_with_room() -> App {
 
 #[test]
 fn snap_empty_grid() {
-    let mut app = App::new(api(), None, None);
+    let mut app = App::new(api(), None, None, None);
     let out = render(&mut app);
     insta::assert_snapshot!(out);
 }
@@ -192,7 +192,7 @@ fn snap_help_view() {
 fn snap_status_mute_hint() {
     let mut app = app_with_room();
     app.toggle_mute();
-    assert_eq!(app.rooms[0].muted, true);
+    assert!(app.rooms[0].muted);
     let out = render(&mut app);
     insta::assert_snapshot!(out);
 }
@@ -201,9 +201,97 @@ fn snap_status_mute_hint() {
 async fn snap_status_remote_retrying() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let remote = RemoteAudio::supervised("127.0.0.1:1".parse().unwrap(), tx);
-    let mut app = App::new(api(), Some(remote), None);
+    let mut app = App::new(api(), Some(remote), None, None);
     app.rooms.push(room_with("6"));
     app.status = Some("audio remote not connected, retrying".into());
     let out = render(&mut app);
     insta::assert_snapshot!(out);
+}
+
+// ── login ─────────────────────────────────────────────────────────
+
+fn login_session(status: bili_api::QrcodeStatus) -> LoginSession {
+    LoginSession {
+        key: Some("abcd".into()),
+        url: Some("https://account.bilibili.com/h5/scan-web?qrcode_key=abcd".into()),
+        status,
+        next_poll: None,
+        error: None,
+    }
+}
+
+#[test]
+fn snap_login_waiting() {
+    let mut app = App::new(api(), None, None, None);
+    app.login = Some(login_session(bili_api::QrcodeStatus::Waiting));
+    app.view = View::Login;
+    insta::assert_snapshot!(render(&mut app));
+}
+
+#[test]
+fn snap_login_expired() {
+    let mut app = App::new(api(), None, None, None);
+    app.login = Some(login_session(bili_api::QrcodeStatus::Expired));
+    app.view = View::Login;
+    insta::assert_snapshot!(render(&mut app));
+}
+
+// ── following ─────────────────────────────────────────────────────
+
+fn following_home() -> bili_api::LiveHome {
+    fn entry(room: u64, uname: &str, online: u64) -> bili_api::LiveRoomEntry {
+        bili_api::LiveRoomEntry {
+            room_id: bili_api::RoomID(room),
+            uid: bili_api::UID(100 + room),
+            uname: uname.into(),
+            title: "live title".into(),
+            online,
+        }
+    }
+    bili_api::LiveHome {
+        followed: vec![
+            entry(1, "liver a", 10),
+            entry(2, "liver b", 20),
+            entry(4, "liver d", 40),
+        ],
+        recommended: vec![entry(3, "liver c", 30)],
+    }
+}
+
+#[test]
+fn snap_following_loaded_logged_in() {
+    let mut app = App::new(api(), None, None, Some(bili_api::UID(42)));
+    app.following = Some(Following {
+        home: Some(following_home()),
+        sel: 1,
+        error: None,
+    });
+    app.view = View::Following;
+    insta::assert_snapshot!(render(&mut app));
+}
+
+#[test]
+fn snap_following_logged_out() {
+    let mut app = App::new(api(), None, None, None);
+    let mut home = following_home();
+    home.followed.clear();
+    app.following = Some(Following {
+        home: Some(home),
+        sel: 0,
+        error: None,
+    });
+    app.view = View::Following;
+    insta::assert_snapshot!(render(&mut app));
+}
+
+#[test]
+fn snap_following_failed() {
+    let mut app = App::new(api(), None, None, None);
+    app.following = Some(Following {
+        home: None,
+        sel: 0,
+        error: Some("bilibili API returned code -352: bad wbi signature".into()),
+    });
+    app.view = View::Following;
+    insta::assert_snapshot!(render(&mut app));
 }

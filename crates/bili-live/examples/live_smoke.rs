@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
         .build();
     let handle = client.spawn(tx);
     let mut seen_danmaku = 0u32;
-    let mut deadline = tokio::time::sleep(Duration::from_secs(45));
+    let deadline = tokio::time::sleep(Duration::from_secs(45));
     tokio::pin!(deadline);
     while seen_danmaku < 3 {
         tokio::select! {

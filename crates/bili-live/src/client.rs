@@ -10,11 +10,11 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{connect_async, tungstenite};
 
 use crate::cmd::{self, Command};
-use std::sync::OnceLock;
 use crate::packet::{
-    self, build_auth_packet, build_heartbeat_packet, decode_business,
-    OP_AUTH_REPLY, OP_SEND_MSG_REPLY,
+    self, OP_AUTH_REPLY, OP_SEND_MSG_REPLY, build_auth_packet, build_heartbeat_packet,
+    decode_business,
 };
+use std::sync::OnceLock;
 
 /// Events from a live room session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +28,11 @@ pub enum LiveEvent {
     /// A danmaku line.
     Danmaku(cmd::Danmaku),
     /// A gift.
-    Gift { user: String, gift: String, num: u32 },
+    Gift {
+        user: String,
+        gift: String,
+        num: u32,
+    },
     /// The room online count changed.
     Online(u64),
     /// The room title or live state changed.
@@ -131,7 +135,11 @@ impl LiveClient {
     }
 
     /// The event loop: connect, pump messages, reconnect with backoff.
-    async fn run(&self, stop_rx: &mut watch::Receiver<bool>, events: mpsc::UnboundedSender<LiveEvent>) {
+    async fn run(
+        &self,
+        stop_rx: &mut watch::Receiver<bool>,
+        events: mpsc::UnboundedSender<LiveEvent>,
+    ) {
         let mut attempts = 0usize;
         let mut server_idx = 0usize;
         loop {
@@ -169,7 +177,8 @@ impl LiveClient {
         *server_idx = server_idx.wrapping_add(1);
         let server = &conf.servers[*server_idx % conf.servers.len()];
         let url = format!("wss://{}:{}/sub", server.host, server.wss_port);
-        let mut ws = match tokio::time::timeout(Duration::from_secs(10), connect_async(&url)).await {
+        let mut ws = match tokio::time::timeout(Duration::from_secs(10), connect_async(&url)).await
+        {
             Ok(Ok((ws, _))) => ws,
             Ok(Err(e)) => return Err(Error::Ws(e)),
             Err(_) => return Err(Error::ConnectTimeout),
@@ -199,7 +208,7 @@ impl LiveClient {
                     }
                 }
             }
-        };
+        }
         let _ = events.send(LiveEvent::Connected);
 
         // Pump messages until the socket dies or the session stops.

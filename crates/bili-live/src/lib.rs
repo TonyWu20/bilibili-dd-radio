@@ -4,9 +4,9 @@
 //! changes, and system messages. The session reconnects
 //! automatically with exponential backoff.
 
-mod cmd;
 mod client;
+mod cmd;
 mod packet;
 
-pub use cmd::{Danmaku, Danmaku as DanmakuLine};
 pub use client::{LiveClient, LiveClientConfig, LiveEvent, LiveHandle};
+pub use cmd::{Danmaku, Danmaku as DanmakuLine};

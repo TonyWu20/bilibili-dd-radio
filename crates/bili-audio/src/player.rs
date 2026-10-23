@@ -53,7 +53,6 @@ impl MpvAudio {
         Self { config }
     }
 
-
     /// Start the mpv process and its IPC loops.
     ///
     /// The caller owns the event receiver. Commands go out through
@@ -112,19 +111,16 @@ static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 impl MpvHandle {
     /// Set the mute state.
     pub fn set_muted(&self, muted: bool) {
-        
         self.send(serde_json::json!(["set_property", "mute", muted]));
     }
 
     /// Set the volume in percent.
     pub fn set_volume(&self, volume: f64) {
-        
         self.send(serde_json::json!(["set_property", "volume", volume]));
     }
 
     /// Load a new stream URL, replacing the current one.
     pub fn reload(&self, url: &str) {
-        
         self.send(serde_json::json!(["loadfile", url, "replace"]));
     }
 
@@ -136,7 +132,6 @@ impl MpvHandle {
 
     /// Quit mpv and remove the socket file.
     pub fn stop(&mut self) {
-        
         self.send(serde_json::json!(["quit"]));
         let _ = self.child.start_kill();
         let _ = std::fs::remove_file(&self.socket_path);
@@ -234,7 +229,7 @@ mod tests {
             .await;
         drop(write_end);
 
-        let got = vec![
+        let got = [
             rx.recv().await,
             rx.recv().await,
             rx.recv().await,
@@ -259,9 +254,7 @@ mod tests {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<(u64, Value)>();
         let writer = tokio::spawn(writer_loop(write_end, cmd_rx));
 
-        let _ = cmd_tx.send((1, serde_json::json!([
-            "set_property", "mute", true
-        ])));
+        let _ = cmd_tx.send((1, serde_json::json!(["set_property", "mute", true])));
         let _ = cmd_tx.send((2, serde_json::json!(["loadfile", "u://x", "replace"])));
         drop(cmd_tx);
         writer.await.unwrap();
@@ -273,9 +266,15 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 2);
         let v1: Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(v1["command"], serde_json::json!(["set_property", "mute", true]));
+        assert_eq!(
+            v1["command"],
+            serde_json::json!(["set_property", "mute", true])
+        );
         assert_eq!(v1["request_id"], 1);
         let v2: Value = serde_json::from_str(lines[1]).unwrap();
-        assert_eq!(v2["command"], serde_json::json!(["loadfile", "u://x", "replace"]));
+        assert_eq!(
+            v2["command"],
+            serde_json::json!(["loadfile", "u://x", "replace"])
+        );
     }
 }

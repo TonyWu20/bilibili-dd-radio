@@ -15,14 +15,19 @@ async fn main() -> anyhow::Result<()> {
     let secs: u64 = args.get(2).map(|s| s.parse().unwrap_or(60)).unwrap_or(60);
     let api = Client::from_config(ClientConfig::builder().build());
     let info = api.room_info(candidate).await?;
-    println!("room {} | {} | live: {}", info.room_id, info.display_name(), info.live_status);
+    println!(
+        "room {} | {} | live: {}",
+        info.room_id,
+        info.display_name(),
+        info.live_status
+    );
     let (tx, mut rx) = mpsc::unbounded_channel::<LiveEvent>();
     let handle = LiveClient::builder()
         .api(api.clone())
         .room(info.room_id)
         .build()
         .spawn(tx);
-    let mut deadline = tokio::time::sleep(Duration::from_secs(secs));
+    let deadline = tokio::time::sleep(Duration::from_secs(secs));
     tokio::pin!(deadline);
     loop {
         tokio::select! {

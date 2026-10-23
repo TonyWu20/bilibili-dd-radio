@@ -56,10 +56,7 @@ impl RemoteAudio {
     /// `RemoteMsg::Up`. A drop sends `RemoteMsg::Lost`. While
     /// disconnected, queued commands are dropped. The app resyncs
     /// open rooms on `RemoteMsg::Up`.
-    pub fn supervised(
-        addr: SocketAddr,
-        out: mpsc::UnboundedSender<RemoteMsg>,
-    ) -> Self {
+    pub fn supervised(addr: SocketAddr, out: mpsc::UnboundedSender<RemoteMsg>) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Value>();
         tokio::spawn(supervise(addr, cmd_rx, out));
         Self { cmd_tx }
@@ -213,11 +210,17 @@ fn parse_event(value: &Value) -> Option<RemoteMsg> {
         "idle" => AudioEvent::Idle,
         "ended" => AudioEvent::Ended(value["reason"].as_str().unwrap_or("eof").into()),
         "gone" => AudioEvent::Gone(
-            value["reason"].as_str().unwrap_or("remote runner closed").into(),
+            value["reason"]
+                .as_str()
+                .unwrap_or("remote runner closed")
+                .into(),
         ),
         _ => return None,
     };
-    Some(RemoteMsg::Event { room, event: mapped })
+    Some(RemoteMsg::Event {
+        room,
+        event: mapped,
+    })
 }
 
 /// Parse a `host:port` string into a socket address.
@@ -336,14 +339,11 @@ mod tests {
         let (rd1, wr1) = c1.into_split();
         remote.send_load(11, "u://11");
         let mut lines1 = tokio::io::BufReader::new(rd1).lines();
-        let line1 = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            lines1.next_line(),
-        )
-        .await
-        .expect("load 1 timed out")
-        .expect("load 1 read failed")
-        .expect("no load 1 line");
+        let line1 = tokio::time::timeout(std::time::Duration::from_secs(5), lines1.next_line())
+            .await
+            .expect("load 1 timed out")
+            .expect("load 1 read failed")
+            .expect("no load 1 line");
         let value: Value = serde_json::from_str(line1.trim()).unwrap();
         assert_eq!(value["room"], "11");
 
@@ -354,13 +354,10 @@ mod tests {
         assert!(matches!(lost, Some(RemoteMsg::Lost)));
 
         // The supervisor reconnects to the same listener.
-        let (c2, _) = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            listener.accept(),
-        )
-        .await
-        .expect("reconnect timed out")
-        .expect("reconnect accept failed");
+        let (c2, _) = tokio::time::timeout(std::time::Duration::from_secs(10), listener.accept())
+            .await
+            .expect("reconnect timed out")
+            .expect("reconnect accept failed");
         let up2 = next_msg(&mut out_rx).await;
         assert!(matches!(up2, Some(RemoteMsg::Up)));
 
@@ -368,22 +365,17 @@ mod tests {
         let (rd2, _wr2) = c2.into_split();
         remote.send_load(12, "u://12");
         let mut lines2 = tokio::io::BufReader::new(rd2).lines();
-        let line2 = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            lines2.next_line(),
-        )
-        .await
-        .expect("load 2 timed out")
-        .expect("load 2 read failed")
-        .expect("no load 2 line");
+        let line2 = tokio::time::timeout(std::time::Duration::from_secs(5), lines2.next_line())
+            .await
+            .expect("load 2 timed out")
+            .expect("load 2 read failed")
+            .expect("no load 2 line");
         let value: Value = serde_json::from_str(line2.trim()).unwrap();
         assert_eq!(value["room"], "12");
     }
 
     /// The next message, with a timeout.
-    async fn next_msg(
-        rx: &mut mpsc::UnboundedReceiver<RemoteMsg>,
-    ) -> Option<RemoteMsg> {
+    async fn next_msg(rx: &mut mpsc::UnboundedReceiver<RemoteMsg>) -> Option<RemoteMsg> {
         tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
             .await
             .ok()

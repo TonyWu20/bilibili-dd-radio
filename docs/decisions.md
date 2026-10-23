@@ -2,6 +2,57 @@
 
 Record of user decisions and technical findings. Newest first.
 
+## 2026-11-05 session 6 (login + following rooms)
+
+- Scope: user asked for login and for fetching/navigating the live rooms
+  of the livers the user follows (M3 login and M2 following list from
+  the milestone plan, done together).
+- **Correction to the M2 protocol finding**: `live_user/v1/Following/list`
+  is dead. It answers `code=1000002, controller
+  live_user\\frontend\\controller\\v1\\C_Following not found`.
+  The live home is the working source: WBI-signed
+  `GET https://api.live.bilibili.com/xlive/web-interface/v1/index/getList?platform=web&web_location=444.7`.
+  The "我的关注" (my follows) module has `module_info.type == 8` and is
+  only sent to logged-in sessions. Its rooms carry `roomid`, `uid`,
+  `uname`, `title`, `online`. Anonymous sessions get category and
+  recommendation modules only. `bdr` shows the followed rooms when
+  logged in; otherwise it shows the recommended modules and a hint.
+- QR login (verified on this machine):
+  - `GET https://passport.bilibili.com/x/passport-login/web/qrcode/generate`
+    (anonymous) returns `data.url` (the scan URL) and `data.qrcode_key`.
+  - `GET .../qrcode/poll?qrcode_key=…` returns `data.code`: 86101
+    waiting, 86090 scanned, 0 success, 86038 expired. On success the
+    `Set-Cookie` headers carry `SESSDATA`, `bili_jct`, `DedeUserID`
+    (plus `DedeUserID__ckMd5`, and `buvid3`/`buvid4` when set), and
+    `data.refresh_token` is present.
+- Login UX: TUI view opened with `L` in the grid. The QR code is
+  rendered as Unicode block characters (two QR module rows packed into
+  one half-block row, two-cell quiet zone) using the `qrcode` crate
+  (`default-features = false`). No image-protocol dependencies: this
+  is a deliberate simplification of the MareDevi reference, which uses
+  `ratatui_image` plus a character fallback. The poll runs every two
+  seconds. `r` refreshes an expired or failed code. On success the
+  credentials are saved, the API client is rebuilt with the login
+  cookie and fingerprint, and the app returns to the grid with a
+  `logged in as uid N` status.
+- Following UX: TUI view opened with `f` in the grid. It lists the
+  followed live rooms, then the recommended rooms. `j/k` or arrows
+  move the selection, `Enter` opens the selected room through the
+  normal open pipeline, `r` refreshes, `Esc` goes back.
+- New CLI: `bdr login` prints the QR code in a plain terminal and
+  polls until success, expiry, or Ctrl-C. It works headless.
+  `bdr login --cookie "SESSDATA=…; bili_jct=…; DedeUserID=…"` saves a
+  pasted cookie string (the manual-paste fallback from decision 3).
+  `bdr logout` removes the credentials file.
+- Credentials live in `~/.config/bilibili-dd-radio/credentials.toml`
+  (TOML per decision 7), mode `0600`. Fields: `sessdata`, `bili_jct`,
+  `dede_user_id`, `dede_user_id_ckmd5`, `buvid3`, `buvid4`,
+  `refresh_token`. All commands load them at start; the status bar
+  shows `uid N` when a login is active.
+- A fake or expired login cookie does not break the following view.
+  The server answers as anonymous, the recommended modules still
+  arrive, and the user sees the login hint.
+
 ## 2026-11-04 session 1
 
 - Language and UI: Rust, `ratatui` TUI.
@@ -57,7 +108,7 @@ Record of user decisions and technical findings. Newest first.
 - UP name: `GET https://api.bilibili.com/x/space/acc/info?mid={uid}&platform=web`.
   Risk control applies to data center IPs. Use `buvid3`/`buvid4` from
   `GET https://api.bilibili.com/x/frontend/finger/spi`. Fall back to uid display on failure.
-- Following list (M2): `https://api.live.bilibili.com/live_user/v1/Following/list` (requires login cookies).
+- Following list (M2): `https://api.live.bilibili.com/live_user/v1/Following/list` (requires login cookies). **Superseded 2026-11-05: this endpoint is dead** (`code=1000002`, controller not found). Use the live home `getList` module type 8 instead; see the session 6 entry.
 - QR login (M3): `POST /x/passport-login/web/qrcode/generate` then poll
   `GET /x/passport-login/web/qrcode/poll?kq={kv}`. Success returns `cookie_info` (SESSDATA, bili_jct, DedeUserID).
 - Danmaku send (M3): protobuf `com.app.live.chat.proto.DmReq`/`DmSend` over `SEND_MSG` (op=4).
@@ -224,6 +275,15 @@ Record of user decisions and technical findings. Newest first.
 - `script -qec "stty rows 30 cols 120; ./target/debug/bdr" /dev/null`
   (pty-driven TUI test; a pty without a real terminal has a 0x0 size,
   so set it with `stty`).
+- `XDG_CONFIG_HOME=$(mktemp -d) cargo run -p bdr -- login --cookie "SESSDATA=x; bili_jct=y; DedeUserID=1"`
+  (save credentials into a throwaway config dir; check the file is
+  `0600`, then `cargo run -p bdr -- logout`).
+- `cargo run -p bdr -- login` prints a scannable QR code in a plain
+  terminal. Point the bilibili app at it to log in from a headless
+  machine.
+- `BDR_COOKIE="SESSDATA=…; bili_jct=…" cargo run -p bili-api --example home_smoke`
+  (followed rooms need a real login session; anonymous shows the
+  recommended rooms).
 
 
 ## Known risk

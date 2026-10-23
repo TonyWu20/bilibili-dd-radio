@@ -13,8 +13,15 @@ pub const LINE_CAP: usize = 200;
 /// One visible line in a room ticker.
 #[derive(Clone, Debug)]
 pub enum Line {
-    Danmaku { user: String, text: String },
-    Gift { user: String, gift: String, num: u32 },
+    Danmaku {
+        user: String,
+        text: String,
+    },
+    Gift {
+        user: String,
+        gift: String,
+        num: u32,
+    },
     System(String),
 }
 
@@ -292,33 +299,34 @@ pub fn spawn_open(
                 Ok(play) => {
                     stream_url = Some(play.url.clone());
                     match remote {
-                    Some(remote) => {
-                        remote.send_load(room_id.get(), &play.url);
-                        if std::env::var("BDR_TRACE").is_ok() {
-                            eprintln!("[bdr] remote load room={room_id}");
-                        }
-                    }
-                    None => {
-                        let socket = std::env::temp_dir().join(format!("bdr-room-{room_id}.sock"));
-                        let _ = std::fs::remove_file(&socket);
-                        let (a_tx, a_rx) = mpsc::unbounded_channel::<AudioEvent>();
-                        let config = MpvAudioConfig::builder()
-                            .url(play.url)
-                            .socket_path(socket)
-                            .build();
-                        let started = MpvAudio::from_config(config).start(a_tx).await;
-                        if std::env::var("BDR_TRACE").is_ok() {
-                            eprintln!("[bdr] mpv start: {started:?}");
-                        }
-                        match started {
-                            Ok(handle) => {
-                                audio = Some(handle);
-                                audio_rx = Some(a_rx);
+                        Some(remote) => {
+                            remote.send_load(room_id.get(), &play.url);
+                            if std::env::var("BDR_TRACE").is_ok() {
+                                eprintln!("[bdr] remote load room={room_id}");
                             }
-                            Err(e) => note = Some(format!("audio: {e}")),
+                        }
+                        None => {
+                            let socket =
+                                std::env::temp_dir().join(format!("bdr-room-{room_id}.sock"));
+                            let _ = std::fs::remove_file(&socket);
+                            let (a_tx, a_rx) = mpsc::unbounded_channel::<AudioEvent>();
+                            let config = MpvAudioConfig::builder()
+                                .url(play.url)
+                                .socket_path(socket)
+                                .build();
+                            let started = MpvAudio::from_config(config).start(a_tx).await;
+                            if std::env::var("BDR_TRACE").is_ok() {
+                                eprintln!("[bdr] mpv start: {started:?}");
+                            }
+                            match started {
+                                Ok(handle) => {
+                                    audio = Some(handle);
+                                    audio_rx = Some(a_rx);
+                                }
+                                Err(e) => note = Some(format!("audio: {e}")),
+                            }
                         }
                     }
-                }
                 }
                 Err(e) => note = Some(format!("play url: {e}")),
             }

@@ -11,7 +11,9 @@ use std::fmt;
 /// The value is the real room id returned by `Room/get_info`, or a
 /// candidate (short id) that must be resolved first. The inner type is
 /// `u64` because room ids are plain integers in every bilibili API.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
 pub struct RoomID(pub u64);
 
 impl RoomID {
@@ -38,7 +40,9 @@ impl std::str::FromStr for RoomID {
 }
 
 /// A bilibili user (UP) identifier.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
 pub struct UID(pub u64);
 
 impl UID {
@@ -145,4 +149,39 @@ pub struct UpInfo {
     pub uid: UID,
     /// The UP display name, or the uid as a string when the lookup failed.
     pub uname: String,
+}
+
+/// A room entry in a live home module.
+///
+/// These are rooms that are live now. The followed modules list the
+/// live rooms of the livers the user follows.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct LiveRoomEntry {
+    /// The real room id.
+    #[serde(rename = "roomid")]
+    pub room_id: RoomID,
+    /// The UP that owns the room.
+    pub uid: UID,
+    /// The UP display name.
+    #[serde(default)]
+    pub uname: String,
+    /// The live room title.
+    #[serde(default)]
+    pub title: String,
+    /// The current online count.
+    #[serde(default)]
+    pub online: u64,
+}
+
+/// The live home page rooms, split by source.
+///
+/// `followed` holds the live rooms of the livers the user follows. It
+/// is empty for an anonymous client: the server only sends the
+/// followed module to logged-in sessions.
+#[derive(Clone, Debug, Default)]
+pub struct LiveHome {
+    /// Live rooms of followed livers.
+    pub followed: Vec<LiveRoomEntry>,
+    /// Recommended rooms.
+    pub recommended: Vec<LiveRoomEntry>,
 }

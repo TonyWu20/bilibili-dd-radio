@@ -5,7 +5,7 @@
 //! image keys served by the `nav` endpoint. The algorithm is public
 //! and used by many third-party clients.
 
-use md5::{Md5, Digest};
+use md5::{Digest, Md5};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};

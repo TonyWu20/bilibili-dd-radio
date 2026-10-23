@@ -81,7 +81,12 @@ pub fn danmus(cmd: &Command) -> Vec<Danmaku> {
                 if text.is_empty() {
                     return None;
                 }
-                Some(Danmaku { user, text, color, uid })
+                Some(Danmaku {
+                    user,
+                    text,
+                    color,
+                    uid,
+                })
             })
             .collect();
         return out;
@@ -102,7 +107,11 @@ pub fn danmus(cmd: &Command) -> Vec<Danmaku> {
                 return None;
             }
             Some(Danmaku {
-                user: info.get(5).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                user: info
+                    .get(5)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
                 text: text.to_string(),
                 color: info.get(2).and_then(|v| v.as_u64()).unwrap_or(255) as u32,
                 uid: info.get(4).and_then(|v| v.as_u64()).unwrap_or(0),
@@ -184,7 +193,8 @@ mod tests {
 
     #[test]
     fn test_room_change_and_online() {
-        let rc = parse_commands(&json!({"cmd": "ROOM_CHANGE", "data": {"title": "t", "live": false}}));
+        let rc =
+            parse_commands(&json!({"cmd": "ROOM_CHANGE", "data": {"title": "t", "live": false}}));
         assert_eq!(room_change(&rc[0]).unwrap(), ("t".into(), false));
         let oc = parse_commands(&json!({"cmd": "ONLINE_RANK_COUNT", "data": {"count": 9}}));
         assert_eq!(online_count(&oc[0]).unwrap(), 9);
