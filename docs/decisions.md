@@ -2,6 +2,62 @@
 
 Record of user decisions and technical findings. Newest first.
 
+## 2026-10-24 session 7 (video in the terminal: mpv + kitty protocol)
+
+- After several test rounds, `mpv` renders live stream video in the
+  terminal smoothly with `--vo=kitty`. Verified on the local ghostty.
+  The 720x405 frame fits the current UI design and purpose.
+- This supersedes session 1 answer 2 ("Audio only. No video display."):
+  terminal video is viable.
+- Verified command shape, playing a signed bilibili HLS URL:
+
+  ```bash
+  mpv --vo=kitty --vo-kitty-use-shm=no \
+      --profile=low-latency \
+      --hwdec=auto-safe \
+      --vd-lavc-fast \
+      --vo-kitty-width=720 \
+      --vo-kitty-height=405 \
+      --msg-level=all=no --term-status-msg="" --term-osd-bar=no \
+      --really-quiet \
+      --referrer=https://live.bilibili.com/ \
+      "https://<cdn-host>/live-bvc/<room>/<stream>/index.m3u8?<signed query>"
+  ```
+
+- Flag notes:
+  - `--vo=kitty`: video out through the kitty graphics protocol.
+    ghostty supports that protocol.
+  - `--vo-kitty-width=720`, `--vo-kitty-height=405`: a fixed 16:9
+    frame, in pixels.
+  - `--profile=low-latency`, `--hwdec=auto-safe`, `--vd-lavc-fast`:
+    a low-latency path. Hardware decode when safe. Fast lavc decode.
+  - `--vo-kitty-use-shm=no`: no POSIX shared-memory image transport.
+  - `--msg-level=all=no`, `--term-status-msg=""`, `--term-osd-bar=no`,
+    `--really-quiet`: no mpv text or OSD on the terminal, so the
+    TUI grid stays intact.
+  - `--referrer=https://live.bilibili.com/`: the bilibili CDN checks
+    the referer. The URL is the signed play URL from `Room/playUrl`,
+    shortened here because it expires.
+- tmux: mpv plus the kitty protocol has a separate known issue inside
+  tmux. It involves `allow-passthrough on`. The tested workaround
+  wraps the mpv command in `kitty-tmux` (tmux 3.3 or later):
+
+  ```bash
+  cargo install --git https://github.com/gergesh/kitty-tmux
+  # in ~/.tmux.conf:
+  set -g allow-passthrough on
+  kitty-tmux mpv --vo=kitty ...
+  ```
+
+  `kitty-tmux` runs the command on a pty and re-wraps the kitty
+  graphics escapes in tmux passthrough. The image reaches the
+  terminal outside tmux. Outside tmux it execs the command directly.
+- Tested on the MacBook Air M4: a local tmux server plus ghostty.
+- Open: video is not in the bdr scope yet. Candidates: one video
+  area for the focused room, or a per-room overlay. `bili-audio`
+  starts mpv with `--no-video`, so a video mode changes the spawn
+  flags or adds a second mpv process.
+
 ## 2026-11-05 session 6 (login + following rooms)
 
 - Scope: user asked for login and for fetching/navigating the live rooms
