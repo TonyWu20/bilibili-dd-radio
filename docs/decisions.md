@@ -35,10 +35,15 @@ and corrected.
   - tmux + `=yes`: broken. Character flood, no image.
   - tmux + wrapper off: tmux drops the whole image. Clean pane,
     no video. Not a fix on its own.
-  - Untested candidate: `--vo-kitty-use-shm=yes` with `=yes` in
-    tmux. The shm name payload sits inside the envelope (line
-    306). The image data flows through a shared-memory file that
-    the outer terminal can read on the same machine.
+  - `--vo-kitty-use-shm=yes`: tested on Mac + ghostty, without
+    tmux. No video. Ghostty's kitty library parses the `t=s`
+    medium, but it is gated behind image-loading limits that
+    default to direct base64 only (`Limits.direct`, shared
+    memory off). Enabling it needs the host app to call
+    `setKittyGraphicsLoadingLimits` with
+    `allWithTempDir`. The stock app does not do that in the
+    files checked (Surface, App, main). The shm path is a dead
+    end on ghostty.
 - Design consequence for bdr:
   - bdr in a tmux pane runs as `kitty-tmux bdr`. The mpv children
     inherit the pty, so their escapes pass through the proxy.
