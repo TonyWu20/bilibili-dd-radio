@@ -7,6 +7,48 @@ Date correction (2026-10-24): the entries written on 2026-10-12 and
 future dates. The dates were re-checked against the commit history
 and corrected.
 
+## 2026-10-24 session 9 (tmux: mpv passthrough bug, kitty-tmux is the path)
+
+- Mac-side investigation (user): with
+  `--vo-kitty-auto-multiplexer-passthrough=yes`, tmux still renders
+  raw kitty escapes. The user's `allow-passthrough` setting is
+  correct. The fault is in the mpv 0.41 passthrough code path.
+- Byte-level mechanism (verified on the Mac against mpv 0.41):
+  - mpv wraps the kitty control sequences in the tmux in-band
+    envelope `ESC P tmux; … ESC \`.
+  - The base64 image payload is appended as plain text, outside
+    the envelope.
+  - tmux forwards the envelope and renders the base64 as pane
+    text. About 2 MB of base64 per frame at 960x540 streams by.
+    The client gets `m=1` controls with no data. No image.
+- Source confirmation (mpv master, checked 2026-10-24):
+  - `flip_page()` in video/out/vo_kitty.c: the control header goes
+    out wrapped (line 315). The base64 chunks are appended raw
+    (line 329). Only the end marker is wrapped (line 330).
+  - The option landed in commit d9dc84c0 (2025-03-22). No fix in
+    the vo_kitty.c history up to 2026-10-10. The bug is still in
+    master.
+- Configurations, verified on the Mac (tmux 3.8 + ghostty):
+  - No tmux: plain kitty VO works (session 7).
+  - tmux + `kitty-tmux mpv …` + `=no`: works. The proxy re-wraps
+    each `DCS G` with the data inside.
+  - tmux + `=yes`: broken. Character flood, no image.
+  - tmux + wrapper off: tmux drops the whole image. Clean pane,
+    no video. Not a fix on its own.
+  - Untested candidate: `--vo-kitty-use-shm=yes` with `=yes` in
+    tmux. The shm name payload sits inside the envelope (line
+    306). The image data flows through a shared-memory file that
+    the outer terminal can read on the same machine.
+- Design consequence for bdr:
+  - bdr in a tmux pane runs as `kitty-tmux bdr`. The mpv children
+    inherit the pty, so their escapes pass through the proxy.
+    bdr must not set the auto-passthrough flag on its mpv
+    command lines.
+  - bdr without tmux: no wrapper. Default flags are correct.
+- Upstream: new-feature bug (d9dc84c0). Report it to mpv. The
+  diff moves the base64 append inside the envelope in
+  `flip_page()`.
+
 ## 2026-10-24 session 8 (bdr video: design and performance gate)
 
 - Decision: terminal video enters the bdr scope. It renders through
@@ -36,10 +78,10 @@ and corrected.
   - `--vo-kitty-alt-screen` and `--vo-kitty-config-clear` default
     to yes. Set both to no for in-TUI use, or mpv takes over the
     whole screen.
-  - `--vo-kitty-auto-multiplexer-passthrough` (default no) wraps
-    the escapes in tmux or screen passthrough when $TMUX or $STY
-    is set. Candidate fix for the tmux issue without kitty-tmux.
-    Untested.
+  - `--vo-kitty-auto-multiplexer-passthrough` (default no) claims
+    to wrap the escapes in tmux or screen passthrough when $TMUX
+    or $STY is set. Tested on the Mac: broken for tmux. The
+    base64 payload goes out outside the envelope. See session 9.
   - On exit, mpv sends `a=d`. That deletes every kitty image in
     the terminal, not just its own. The other overlays vanish for
     one frame until each live mpv sends its next frame.
@@ -411,6 +453,8 @@ and corrected.
   performance gate; needs the nix devshell for mpv; session 8).
 - `scripts/video-perf.sh -d 60 6 280446 6557640` (the same gate in
   a terminal host: ghostty or kitty; session 8).
+- `kitty-tmux bash scripts/video-perf.sh -d 60 6 280446 6557640`
+  (the gate inside tmux; session 9).
 - `script -qec "stty rows 30 cols 120; ./target/debug/bdr" /dev/null`
   (pty-driven TUI test; a pty without a real terminal has a 0x0 size,
   so set it with `stty`).

@@ -23,10 +23,13 @@
 # Extra mpv flags for experiments:
 #   VIDEO_PERF_MPV_ARGS="--hwdec=cuda" scripts/video-perf.sh -q 6
 #
-# Inside tmux the images reach the outer terminal only when
-# ~/.tmux.conf has `set -g allow-passthrough on` and either
-# VIDEO_PERF_MPV_ARGS="--vo-kitty-auto-multiplexer-passthrough=yes"
-# is set, or the whole session is wrapped in kitty-tmux.
+# Inside tmux, wrap the whole session in kitty-tmux:
+#   kitty-tmux bash scripts/video-perf.sh -d 60 6
+# with `set -g allow-passthrough on` in ~/.tmux.conf. Do not use
+# --vo-kitty-auto-multiplexer-passthrough=yes under tmux: an mpv
+# 0.41 bug sends the base64 payload outside the passthrough
+# envelope, so tmux renders it as pane text (decisions.md
+# session 9).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
