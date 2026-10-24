@@ -2,6 +2,85 @@
 
 Record of user decisions and technical findings. Newest first.
 
+Date correction (2026-10-24): the entries written on 2026-10-12 and
+2026-10-24 were mislabeled 2026-11-04/05. The serving model wrote
+future dates. The dates were re-checked against the commit history
+and corrected.
+
+## 2026-10-24 session 8 (bdr video: design and performance gate)
+
+- Decision: terminal video enters the bdr scope. It renders through
+  mpv over the kitty protocol, the engine verified in session 7.
+- Design requirements (user):
+  - A per-room video overlay. The overlay is togglable. This is a
+    must-have.
+  - The focused-room layout (the danmaku view) also carries a video
+    overlay, togglable.
+- Design proposal, pending user sign-off:
+  - One mpv per room, as the audio path already does. A room with
+    video on adds the kitty flags and its stdout goes to the
+    terminal. A room without video keeps `--no-video` and null
+    stdout.
+  - Toggling video respawns that room's mpv. Audio restarts with
+    it.
+  - `v` toggles the video of the focused room, in the grid view
+    and in the danmaku view.
+  - The TUI leaves the overlay cells empty. It draws a border
+    around them. The kitty image renders above normal text.
+  - On terminal resize or grid change, the video mpv respawns so
+    the image lands in the new cell position.
+  - Remote audio mode: no video. The runner has no terminal.
+- mpv source findings (video/out/vo_kitty.c, v0.41):
+  - `--vo-kitty-top` and `--vo-kitty-left` place the image in
+    cells. The image draws at the cursor position.
+  - `--vo-kitty-alt-screen` and `--vo-kitty-config-clear` default
+    to yes. Set both to no for in-TUI use, or mpv takes over the
+    whole screen.
+  - `--vo-kitty-auto-multiplexer-passthrough` (default no) wraps
+    the escapes in tmux or screen passthrough when $TMUX or $STY
+    is set. Candidate fix for the tmux issue without kitty-tmux.
+    Untested.
+  - On exit, mpv sends `a=d`. That deletes every kitty image in
+    the terminal, not just its own. The other overlays vanish for
+    one frame until each live mpv sends its next frame.
+- Performance gate, run headless on this NixOS host (GTX 1070,
+  44 cores, nix devshell mpv v0.41):
+  - GPU hardware decode does not engage. `--hwdec=auto-safe` lands
+    on software decode. `hwdec-current` reports `vulkan-copy`,
+    which is GPU copy only.
+  - Explicit `--hwdec=vaapi`, `cuda`, and `vulkan` all fail with
+    "Could not create device". The nvidia 580.142 driver is
+    present: nvidia-smi works and cuInit succeeds from a test
+    program. The nixpkgs store has no nvidia libva driver. The
+    nixpkgs mpv build or the container GPU access blocks device
+    creation. Not root-caused further.
+  - Software decode, 3 concurrent overlays, 60 s window:
+
+    | room    | drops/60s | cpu%  |
+    |---------|-----------|-------|
+    | 6       | 47        | 52.7  |
+    | 280446  | 39        | 84.3  |
+    | 6557640 | 21        | 87.4  |
+
+    Total CPU 224.4%. GPU utilization stays near 0%. All three
+    streams play in real time. The drop rate is around 1-2.5% of
+    frames at 30 fps.
+  - Read: three overlays work on this host, but the software
+    pipeline costs about 2.25 cores. This is the pessimistic
+    case. Hardware decode is expected to cut the cost sharply.
+- Open:
+  - The M4 Mac target is untested. Its VideoToolbox decode is the
+    likely winner. Run `scripts/video-perf.sh` on the Mac and
+    record `hwdec-current` and the CPU there.
+  - The pixel-to-cell mapping of the kitty image depends on the
+    terminal font. Confirm it once on the target terminal before
+    the cell math.
+  - The user sets the CPU tolerance for N overlays.
+- Harness: `scripts/video-perf.sh`. Headless host or terminal
+  host. It spawns N mpv instances, waits 5 s, measures the window
+  given by `-d`, then reports per stream: `hwdec-current`,
+  `frame-drop-count`, CPU. It kills the mpv instances on exit.
+
 ## 2026-10-24 session 7 (video in the terminal: mpv + kitty protocol)
 
 - After several test rounds, `mpv` renders live stream video in the
@@ -58,7 +137,7 @@ Record of user decisions and technical findings. Newest first.
   starts mpv with `--no-video`, so a video mode changes the spawn
   flags or adds a second mpv process.
 
-## 2026-11-05 session 6 (login + following rooms)
+## 2026-10-24 session 6 (login + following rooms)
 
 - Scope: user asked for login and for fetching/navigating the live rooms
   of the livers the user follows (M3 login and M2 following list from
@@ -109,7 +188,7 @@ Record of user decisions and technical findings. Newest first.
   The server answers as anonymous, the recommended modules still
   arrive, and the user sees the login hint.
 
-## 2026-11-04 session 1
+## 2026-10-12 session 1
 
 - Language and UI: Rust, `ratatui` TUI.
 - Product: listen to multiple bilibili live rooms together. Audio is mixed in the OS audio stack.
@@ -118,7 +197,7 @@ Record of user decisions and technical findings. Newest first.
 - Rooms can be bookmarked. User can browse on-air streams of followed livers.
   User can open any room by searching a UP name or typing a room URL/ID.
 
-## 2026-11-04 session 1 (answers)
+## 2026-10-12 session 1 (answers)
 
 1. Audio engine: external `mpv` binary, controlled from Rust over mpv JSON IPC.
    One mpv process per room. Mixing happens in PipeWire/PulseAudio.
@@ -143,7 +222,7 @@ Record of user decisions and technical findings. Newest first.
 - Builders: `bon` crate.
 - Newtypes distinguish same-shape primitive types. For example `RoomID` and `UID`.
 
-## Protocol findings (verified from this machine, 2026-11-04)
+## Protocol findings (verified from this machine, 2026-10-12)
 
 - Room info: `GET https://api.live.bilibili.com/room/v1/Room/get_info?room_id={id}`.
   Accepts short id and real room id. Returns `room_id`, `uid`, `live_status`, `online`, `title`.
@@ -164,13 +243,13 @@ Record of user decisions and technical findings. Newest first.
 - UP name: `GET https://api.bilibili.com/x/space/acc/info?mid={uid}&platform=web`.
   Risk control applies to data center IPs. Use `buvid3`/`buvid4` from
   `GET https://api.bilibili.com/x/frontend/finger/spi`. Fall back to uid display on failure.
-- Following list (M2): `https://api.live.bilibili.com/live_user/v1/Following/list` (requires login cookies). **Superseded 2026-11-05: this endpoint is dead** (`code=1000002`, controller not found). Use the live home `getList` module type 8 instead; see the session 6 entry.
+- Following list (M2): `https://api.live.bilibili.com/live_user/v1/Following/list` (requires login cookies). **Superseded 2026-10-24: this endpoint is dead** (`code=1000002`, controller not found). Use the live home `getList` module type 8 instead; see the session 6 entry.
 - QR login (M3): `POST /x/passport-login/web/qrcode/generate` then poll
   `GET /x/passport-login/web/qrcode/poll?kq={kv}`. Success returns `cookie_info` (SESSDATA, bili_jct, DedeUserID).
 - Danmaku send (M3): protobuf `com.app.live.chat.proto.DmReq`/`DmSend` over `SEND_MSG` (op=4).
   Reference protos live in public bilibili-live-danmaku projects. Protocol to be confirmed during M3.
 
-## 2026-11-04 session 2 (M1: bdr TUI)
+## 2026-10-12 session 2 (M1: bdr TUI)
 
 - M1 done: `bdr` opens the ratatui TUI. Views: room grid, add-room prompt,
   danmaku view, help. Keys: `g` add room, `x` close, `m` mute, `d` danmaku,
@@ -205,7 +284,7 @@ Record of user decisions and technical findings. Newest first.
 - mpv `--log-msg-to-file` crashes this mpv build at startup (exit 1, no
   file created). Do not use that flag; use `--really-quiet` instead.
 
-## 2026-11-04 session 2 (remote audio, option A)
+## 2026-10-12 session 2 (remote audio, option A)
 
 - The TUI can play audio on a machine with speakers. New subcommand
   `bdr audio-local` runs on that machine. It listens on 127.0.0.1 (default
@@ -226,7 +305,7 @@ Record of user decisions and technical findings. Newest first.
   The runner marks stopped rooms. A still-starting mpv drops itself.
 
 
-## 2026-11-05 session 2 (remote audio, option A)
+## 2026-10-12 session 2 (remote audio, option A, runner and tunnel)
 
 - The TUI can play audio on a machine that has speakers, and run
   headless on another. New subcommand `bdr audio-local [--port 7888]`
@@ -265,7 +344,7 @@ Record of user decisions and technical findings. Newest first.
   tested through the same JSON.
 
 
-## 2026-11-05 session 3 (UI fixes, snapshot tests)
+## 2026-10-12 session 3 (UI fixes, snapshot tests)
 
 - Heart-click danmaku carry no text and no user name. The parser
   falls back to the uid, which renders as `0` or `10000` in the
@@ -288,7 +367,7 @@ Record of user decisions and technical findings. Newest first.
   failures on stderr for tunnel debugging.
 
 
-## 2026-11-05 session 4 (danmaku separator, multi-room start)
+## 2026-10-12 session 4 (danmaku separator, multi-room start)
 
 - One line renderer for both views. The grid ticker and the
   danmaku view both use `Line::short`. The grid trims to 26 chars.
@@ -299,7 +378,7 @@ Record of user decisions and technical findings. Newest first.
   the normal pipeline.
 
 
-## 2026-11-05 session 5 (count-driven grid layout)
+## 2026-10-12 session 5 (count-driven grid layout)
 
 - The grid is driven by the room count, not the terminal width.
   Three rooms or fewer sit in one row. Each row holds at most
@@ -328,6 +407,10 @@ Record of user decisions and technical findings. Newest first.
   runner, then point a TUI at it with
   `cargo run -p bdr -- --audio-remote 127.0.0.1:7891`.
 - `cargo run -p bdr -- probe 6 -n 3 -t 30` (headless end-to-end check).
+- `scripts/video-perf.sh -q 6 280446 6557640` (headless video
+  performance gate; needs the nix devshell for mpv; session 8).
+- `scripts/video-perf.sh -d 60 6 280446 6557640` (the same gate in
+  a terminal host: ghostty or kitty; session 8).
 - `script -qec "stty rows 30 cols 120; ./target/debug/bdr" /dev/null`
   (pty-driven TUI test; a pty without a real terminal has a 0x0 size,
   so set it with `stty`).
