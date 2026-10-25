@@ -67,11 +67,22 @@ and corrected.
 - The flake now ships the patched mpv as a package:
   `packages.<system>.mpv-patched`. The devShell uses the package
   instead of the nixpkgs mpv.
-- The mpv source is vendored at vendor/mpv-0.41.0 (the exact
-  tag tree, about 17 MB). GitHub is not reliably reachable from
-  the build hosts. codeload 404s the mpv tarballs, even for the
-  current master. In-sandbox git fetch fails on ref and SHA
-  fetches alike. Vendoring keeps the flake buildable offline.
+- The first package design vendored the mpv v0.41.0 tree
+  (vendor/mpv-0.41.0, about 17 MB) because GitHub looked
+  unreachable from the build hosts. The user rejected a 17 MB
+  source tree in the repository.
+- The final design keeps no mpv source in the repository. The
+  flake adds the patch to the nixpkgs mpv-unwrapped base.
+  nixpkgs fetches the mpv source itself (fetchFromGitHub, tag
+  v0.41.0, hash-checked). On this host the tarball arrives via
+  cache.nixos.org, so the build works.
+- The flake exposes the patch as an overlay
+  (overlays.<system>.default) and applies it to its own
+  packages and devShells with lib.fix. Users can also apply the
+  overlay to their own nixpkgs package sets.
+- Caveat: when nixpkgs bumps mpv past 0.41.0 the patch may stop
+  applying. The flake lock pins the nixpkgs revision, so this
+  only happens on a nix flake update.
 - The flake must override `pkgs."mpv-unwrapped"`. `pkgs.mpv` is
   the with-scripts wrapper. Overriding the wrapper adds the
   attributes to the wrapper and the base build stays stock. The

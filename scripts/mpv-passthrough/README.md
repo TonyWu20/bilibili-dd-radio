@@ -13,7 +13,9 @@ The bdr flake ships the patched mpv as a package:
 
     nix profile install github:bilibili-dd-radio#mpv-patched
 
-The flake devShell uses the same package.
+The flake also exposes an overlay (overlays.<system>.default) that
+adds mpv-patched to any nixpkgs package set. The flake devShell
+uses the same package.
 
 ## Bug (verified against mpv source and on ghostty + tmux 3.8)
 
@@ -47,14 +49,24 @@ window can end mid-frame.
 
     nix build .#packages.x86_64-linux.mpv-patched
 
-The package builds the vendored mpv v0.41.0 source
-(`vendor/mpv-0.41.0` in the repository root) with the patch from
-this directory.
+The package overrides nixpkgs `mpv-unwrapped` and adds the patch
+from this directory. nixpkgs fetches the mpv source itself
+(fetchFromGitHub, tag v0.41.0, hash-checked). No mpv source is
+kept in this repository.
 
-The mpv source is vendored, not fetched. GitHub is not reliably
-reachable from the build hosts: codeload 404s the mpv tarballs
-and in-sandbox git fetch fails. The vendored tree is the exact tag
-`41f6a645068483470267271e1d09966ca3b9f413`.
+The flake applies the patch with an overlay plus `lib.fix`:
+
+    mpvPatchedOverlay = final: prev: {
+      mpv-patched = prev."mpv-unwrapped".overrideAttrs (old: {
+        pname = "mpv-patched";
+        patches = (old.patches or [ ]) ++ [ ./patch-file ];
+        patchFlags = [ "-p1" ];
+      });
+    };
+
+When nixpkgs bumps mpv past 0.41.0, the patch may stop
+applying. The flake lock pins the nixpkgs revision, so this
+only happens on a nix flake update.
 
 ## Run the tests
 
@@ -85,3 +97,5 @@ at most one unterminated DCS as the last item of the capture.
   undoubles to one ESC, `ESC ST` ends the envelope.
 - The flake overrides `mpv-unwrapped`, not `mpv`. `pkgs.mpv` is
   the with-scripts wrapper and ignores `src`/`patches` overrides.
+  This failure is silent: the package builds and behaves exactly
+  like stock mpv.
