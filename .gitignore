@@ -2,3 +2,5 @@ sessions/
 .direnv
 .envrc
 target/
+result
+result-man

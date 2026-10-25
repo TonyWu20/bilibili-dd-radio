@@ -33,21 +33,22 @@
         };
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # Patched mpv: pinned mpv master commit plus the tmux in-band
-      # passthrough fix from scripts/mpv-passthrough/. The patch
-      # moves the chunked base64 image data inside the tmux DCS
-      # envelope in flip_page(). Stock mpv writes that payload
-      # outside the envelope, so tmux renders it as pane text.
+      # Patched mpv: mpv v0.41.0 plus the tmux in-band passthrough
+      # fix from scripts/mpv-passthrough/. The patch moves the
+      # chunked base64 image data inside the tmux DCS envelope in
+      # flip_page(). Stock mpv writes that payload outside the
+      # envelope, so tmux renders it as pane text.
+      #
+      # Override mpv-unwrapped, the base derivation. pkgs.mpv is
+      # the with-scripts wrapper and ignores these overrides.
+      # The mpv v0.41.0 source is vendored: github.com is not
+      # reliably reachable from the build hosts (codeload 404s,
+      # in-sandbox git fetch fails). The vendored tree is the
+      # exact tag 41f6a645068483470267271e1d09966ca3b9f413.
+      # Its version matches the nixpkgs base, 0.41.0.
       mkMpvPatched =
         pkgs:
-        pkgs.mpv.overrideAttrs (old: {
-          version = "0.41.0";
-          # The mpv v0.41.0 source is vendored: github.com is not
-          # reliably reachable from the build hosts (codeload 404s,
-          # in-sandbox git fetch fails). The vendored tree is the
-          # exact tag 41f6a645068483470267271e1d09966ca3b9f413.
-          # The patch in scripts/mpv-passthrough/ is a diff
-          # against that tree.
+        (pkgs."mpv-unwrapped").overrideAttrs (old: {
           src = ./vendor/mpv-0.41.0;
           patches = [ ./scripts/mpv-passthrough/vo_kitty-tmux-passthrough.patch ];
           patchFlags = [ "-p1" ];

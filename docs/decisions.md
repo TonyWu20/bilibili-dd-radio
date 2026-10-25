@@ -57,6 +57,30 @@ and corrected.
   2. Keep the kitty-tmux proxy as the tmux path.
   3. File the upstream mpv issue and wait for a release.
 
+## 2026-10-25 session 10 addendum (flakes and the v0.41.0 rebase)
+
+- The upstream patch was rebased onto the mpv v0.41.0 tag
+  (commit 41f6a645068483470267271e1d09966ca3b9f413). That tag is
+  the newest release ref and matches the mpv both devshells run.
+  The v0.41.0 kitty VO predates the terminal_swapchain refactor.
+  The patch ports to it with the same fix shape.
+- The flake now ships the patched mpv as a package:
+  `packages.<system>.mpv-patched`. The devShell uses the package
+  instead of the nixpkgs mpv.
+- The mpv source is vendored at vendor/mpv-0.41.0 (the exact
+  tag tree, about 17 MB). GitHub is not reliably reachable from
+  the build hosts. codeload 404s the mpv tarballs, even for the
+  current master. In-sandbox git fetch fails on ref and SHA
+  fetches alike. Vendoring keeps the flake buildable offline.
+- The flake must override `pkgs."mpv-unwrapped"`. `pkgs.mpv` is
+  the with-scripts wrapper. Overriding the wrapper adds the
+  attributes to the wrapper and the base build stays stock. The
+  mistake is silent: the package builds and behaves exactly like
+  stock mpv.
+- The nix-built package passed the tmux test: 361 complete RGB24
+  frames, clean pane. The stock binary floods the pane in the
+  same harness.
+
 ## 2026-10-24 session 9 (tmux: mpv passthrough bug, kitty-tmux is the path)
 
 - Mac-side investigation (user): with
