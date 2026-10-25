@@ -7,6 +7,56 @@ Date correction (2026-10-24): the entries written on 2026-10-12 and
 future dates. The dates were re-checked against the commit history
 and corrected.
 
+## 2026-10-25 session 10 (mpv fork: the tmux passthrough patch, verified headlessly)
+
+- The session 9 upstream candidate is now a built and tested
+  patch. mpv master (703e59b) is cloned to
+  /home/tony/programming/mpv-kitty-passthrough/src. Three commits
+  fix video/out/vo_kitty.c:
+  - b61a195: wrap the chunked base64 in the tmux in-band envelope
+    (the session 9 diff).
+  - ccb73f2: build control strings with talloc (av_asprintf is not
+    declared in this tree).
+  - b406975: drop the NUL from the doubled ST literal.
+- Test kit, committed to the bdr repo:
+  scripts/mpv-passthrough/ (patch, test-tmux.sh,
+  analyze-client.py, README.md, monitor-build.sh).
+- Test method. A private tmux 3.8 server runs on a temp socket
+  with allow-passthrough on. The mpv binary is the session
+  start-command, in a pane that starts in /. The pane stdout
+  stream is captured with pipe-pane. The pane screen is checked
+  for base64 runs. The envelope bytes are walked the way tmux
+  walks them: an ESC ESC pair undoubles to one ESC, ESC ST ends
+  the envelope.
+- Result, patched binary (mpv 0.41.0-dev-gccb73f2fe, 15 s of
+  stream at 96x54):
+  - 360 complete image frames, 1800 continuation DCS.
+  - 0 unterminated DCS.
+  - 7464960 bytes of base64. They decode to the exact RGB24 byte
+    size for 360 frames of 96x54.
+  - The pane screen is clean. No base64 flood.
+- Result, stock mpv 0.41 control, same harness:
+  - 4680 envelopes, 2160 unterminated DCS, 0 complete frames.
+  - The pane floods with base64 text.
+  - The session 9 symptom is reproduced headlessly on the host.
+- Harness findings worth keeping:
+  - A captured tmux client attach shows no envelopes. The client
+    swallows the in-band DCS on its own pty. The pane stdout is
+    the observable stream.
+  - Starting the tmux server from a direnv-managed repository
+    makes the pane shell load the devshell menu. It eats the
+    start command. The pane must start in /.
+  - nixpkgs ffmpeg and libass need the .dev split for headers and
+    pkg-config files. nix shell does not set PKG_CONFIG_PATH for
+    dev-only outputs. build.sh exports it from nix eval --raw.
+- The byte layout of the fixed envelope matches the kitty-tmux
+  proxy: the tmux DCS prefix, then the kitty DCS with every ESC
+  doubled, then ESC ST.
+- Open decision. Three paths for bdr under tmux:
+  1. Ship the patched mpv into the devshell.
+  2. Keep the kitty-tmux proxy as the tmux path.
+  3. File the upstream mpv issue and wait for a release.
+
 ## 2026-10-24 session 9 (tmux: mpv passthrough bug, kitty-tmux is the path)
 
 - Mac-side investigation (user): with

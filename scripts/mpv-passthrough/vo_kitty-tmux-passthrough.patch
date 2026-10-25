@@ -1,0 +1,341 @@
+From b61a195c67a9f6d310b8f2ffaffa2371dcd95854 Mon Sep 17 00:00:00 2001
+From: TonyWu20 <tony.w21@gmail.com>
+Date: Sun, 25 Oct 2026 06:51:46 +0800
+Subject: [PATCH 1/3] vo_kitty: wrap chunked base64 in the tmux passthrough
+ envelope
+
+tmux drops raw DCS payloads that are not wrapped. The original code
+appended the base64 payload after the wrapped fragments. tmux kept
+the control fragments and wrote the payload into the pane as text.
+
+Move the payload inside the envelope. The byte layout matches the
+kitty-tmux proxy: the tmux DCS prefix, then the kitty DCS with
+every ESC doubled, then ESC ST. Double the DCS terminator so the
+client gets a complete DCS. delete-all and the cursor move use the
+same wrapper, with proper ST termination.
+---
+ video/out/vo_kitty.c | 125 +++++++++++++++++++++++++++++++------------
+ 1 file changed, 91 insertions(+), 34 deletions(-)
+
+diff --git a/video/out/vo_kitty.c b/video/out/vo_kitty.c
+index 2009f27..a2d7ee1 100644
+--- a/video/out/vo_kitty.c
++++ b/video/out/vo_kitty.c
+@@ -54,7 +54,13 @@
+ static const bstr KITTY_ESC_END = bstr0_lit("\033\\");
+ static const bstr KITTY_ESC_DELETE_ALL = bstr0_lit("\033_Ga=d;");
+ 
+-static const bstr DCS_TMUX_PREFIX = bstr0_lit("\033Ptmux;\033");
++/* The envelope is the tmux in-band DCS: ESC P tmux; followed by the
++ * terminal escape with every ESC doubled, then ESC ST. tmux
++ * undoubles the ESCs and forwards the payload to the client. The
++ * byte layout matches the kitty-tmux proxy. No trailing ESC after
++ * the semicolon: the first doubled ESC of the payload carries it.
++ */
++static const bstr DCS_TMUX_PREFIX = bstr0_lit("\033Ptmux;");
+ static const bstr DCS_SCREEN_PREFIX = bstr0_lit("\033P\033");
+ static const bstr DCS_SUFFIX = bstr0_lit("\033\\");
+ 
+@@ -87,24 +93,72 @@ struct priv {
+ };
+ 
+ 
+-static inline void append_passthrough(struct priv *p, bstr *bs, bstr append)
++/*
++ * Append a complete terminal escape (CSI or a complete DCS). When
++ * no multiplexer is active the escape is written out raw. When
++ * tmux or screen is active it is wrapped in the in-band DCS
++ * envelope with every ESC inside the escape doubled, as the tmux
++ * client expects. The screen prefix keeps the legacy envelope
++ * bytes; the tmux envelope is the one that is verified.
++ */
++static inline void append_doubled(bstr *bs, bstr s)
++{
++    for (size_t i = 0; i < s.len; i++) {
++        if (s.start[i] == '\033')
++            bstr_xappend(NULL, bs, (bstr){"\033\033", 2});
++        else
++            bstr_xappend(NULL, bs, (bstr){s.start + i, 1});
++    }
++}
++
++static inline void append_esc(struct priv *p, bstr *bs, bstr esc)
+ {
++    if (!p->dcs_prefix.len) {
++        bstr_xappend(NULL, bs, esc);
++        return;
++    }
+     bstr_xappend(NULL, bs, p->dcs_prefix);
+-    bstr_xappend(NULL, bs, append);
++    append_doubled(bs, esc);
+     bstr_xappend(NULL, bs, p->dcs_suffix);
+ }
+ 
+ MP_PRINTF_ATTRIBUTE(3, 4)
+-static inline void append_asprintf_passthrough(struct priv *p, bstr *bs,
+-                                                     const char *fmt, ...)
++static inline void append_asprintf_esc(struct priv *p, bstr *bs,
++                                       const char *fmt, ...)
+ {
+-    bstr_xappend(NULL, bs, p->dcs_prefix);
+-
++    char *s;
+     va_list ap;
+     va_start(ap, fmt);
+-    bstr_xappend_vasprintf(NULL, bs, fmt, ap);
++    av_vasprintf(&s, fmt, ap);
+     va_end(ap);
++    append_esc(p, bs, bstr0(s));
++    av_free(s);
++}
+ 
++/*
++ * Append a kitty image DCS: a control part, an optional base64
++ * payload, and the ST terminator. The control part and the ST go
++ * through the envelope with ESC doubling. The payload carries no
++ * ESC bytes and is appended verbatim inside the envelope. Keeping
++ * the payload inside the envelope is what the original code did
++ * not do: tmux dropped the raw payload and the terminal received
++ * no image data.
++ */
++static inline void append_kitty_dcs(struct priv *p, bstr *bs, bstr ctrl,
++                                    bstr data)
++{
++    if (!p->dcs_prefix.len) {
++        bstr_xappend(NULL, bs, ctrl);
++        if (data.len)
++            bstr_xappend(NULL, bs, data);
++        bstr_xappend(NULL, bs, KITTY_ESC_END);
++        return;
++    }
++    bstr_xappend(NULL, bs, p->dcs_prefix);
++    append_doubled(bs, ctrl);
++    if (data.len)
++        bstr_xappend(NULL, bs, data);
++    bstr_xappend(NULL, bs, (bstr){"\033\033\\", 4});
+     bstr_xappend(NULL, bs, p->dcs_suffix);
+ }
+ 
+@@ -179,8 +233,7 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
+     vo->want_redraw = true;
+ 
+     bstr *next = terminal_swapchain_next(p->swapchain);
+-    append_passthrough(p, next, KITTY_ESC_DELETE_ALL);
+-    append_passthrough(p, next, KITTY_ESC_END);
++    append_kitty_dcs(p, next, KITTY_ESC_DELETE_ALL, (bstr){NULL, 0});
+     if (p->opts.config_clear)
+         bstr_xappend(NULL, next, (bstr)bstr0_lit(TERM_ESC_CLEAR_SCREEN));
+ 
+@@ -300,44 +353,49 @@ static void flip_page(struct vo *vo)
+     bstr *cmd = terminal_swapchain_acquire(p->swapchain);
+ 
+     // Start with ESC to position the cursor
+-    append_asprintf_passthrough(p, cmd, TERM_ESC_GOTO_YX, p->top, p->left);
++    append_asprintf_esc(p, cmd, TERM_ESC_GOTO_YX, p->top, p->left);
+ 
+     if (p->opts.use_shm) {
+-        append_asprintf_passthrough(p, cmd, KITTY_ESC_IMG_SHM,
+-                                    vo->dwidth, vo->dheight, p->shm_path_b64);
+-        append_passthrough(p, cmd, KITTY_ESC_END);
++        char *s;
++        av_asprintf(&s, KITTY_ESC_IMG_SHM,
++                    vo->dwidth, vo->dheight, p->shm_path_b64);
++        append_kitty_dcs(p, cmd, bstr0(s), (bstr){NULL, 0});
++        av_free(s);
+     } else {
+         if (!p->output) {
+             terminal_swapchain_present(p->swapchain, cmd);
+             return;
+         }
+ 
+-        append_asprintf_passthrough(p, cmd, KITTY_ESC_IMG,
+-                                    vo->dwidth, vo->dheight);
++        char *s;
++        av_asprintf(&s, KITTY_ESC_IMG, vo->dwidth, vo->dheight);
+ 
+         int output_size = p->output_size - 1;
+         int offset = 0;
+ 
+-        for (; offset < output_size; ) {
+-            int chunk = MPMIN(4096, output_size - offset);
+-
+-            if (offset > 0)
+-                append_asprintf_passthrough(p, cmd, KITTY_ESC_CONTINUE,
+-                                            offset + chunk < output_size);
++        if (output_size > 0) {
++            int chunk = MPMIN(4096, output_size);
++            append_kitty_dcs(p, cmd, bstr0(s),
++                             (bstr){p->output, chunk});
++            offset += chunk;
++        }
++        av_free(s);
+ 
+-            // Append at max chunk bytes
+-            bstr_xappend(NULL, cmd, (bstr){p->output + offset, chunk});
+-            append_passthrough(p, cmd, KITTY_ESC_END);
++        while (offset < output_size) {
++            int chunk = MPMIN(4096, output_size - offset);
++            bool last = offset + chunk >= output_size;
++            static const bstr cont_more = bstr0_lit("\033_Gm=1;");
++            static const bstr cont_last = bstr0_lit("\033_Gm=0;");
++            append_kitty_dcs(p, cmd, last ? cont_last : cont_more,
++                             (bstr){p->output + offset, chunk});
+             offset += chunk;
+         }
+ 
+-        // When the data is less than or equal to chunk size the final packet
+-        // isn't sent, i.e. an escape sequence with `m=0`.
+-        // This ensures that an escape sequence with `m=0` is sent and
+-        // terminals stay happy
+-        if (offset == 0) {
+-            append_asprintf_passthrough(p, cmd, KITTY_ESC_CONTINUE, 0);
+-            append_passthrough(p, cmd, KITTY_ESC_END);
++        // When there is no data at all a single `m=0` packet keeps
++        // terminals happy.
++        if (output_size == 0) {
++            append_kitty_dcs(p, cmd, bstr0_lit("\033_Gm=0;"),
++                             (bstr){NULL, 0});
+         }
+     }
+ 
+@@ -421,8 +479,7 @@ static void uninit(struct vo *vo)
+     struct priv *p = vo->priv;
+ 
+     bstr *out = terminal_swapchain_acquire(p->swapchain);
+-    append_passthrough(p, out, KITTY_ESC_DELETE_ALL);
+-    append_passthrough(p, out, KITTY_ESC_END);
++    append_kitty_dcs(p, out, KITTY_ESC_DELETE_ALL, (bstr){NULL, 0});
+     bstr_xappend(NULL, out, (bstr)bstr0_lit(TERM_ESC_RESTORE_CURSOR));
+     if (p->opts.alt_screen) {
+         bstr_xappend(NULL, out, (bstr)bstr0_lit(TERM_ESC_NORMAL_SCREEN));
+-- 
+2.55.0
+
+
+From ccb73f2fe8a02a821bfe8761a3c16a332202dddd Mon Sep 17 00:00:00 2001
+From: TonyWu20 <tony.w21@gmail.com>
+Date: Sun, 25 Oct 2026 08:33:08 +0800
+Subject: [PATCH 2/3] vo_kitty: use talloc for escape string assembly
+
+av_asprintf is not declared in this tree. Build the control
+strings with a talloc temp context. Move the continuation control
+constants to file scope so they stay valid bstr initializers.
+---
+ video/out/vo_kitty.c | 29 ++++++++++++++++-------------
+ 1 file changed, 16 insertions(+), 13 deletions(-)
+
+diff --git a/video/out/vo_kitty.c b/video/out/vo_kitty.c
+index a2d7ee1..c88f264 100644
+--- a/video/out/vo_kitty.c
++++ b/video/out/vo_kitty.c
+@@ -52,6 +52,8 @@
+ #define KITTY_ESC_IMG_SHM    "\033_Ga=T,t=s,f=24,s=%d,v=%d,C=1,q=2,m=1;%s"
+ #define KITTY_ESC_CONTINUE   "\033_Gm=%d;"
+ static const bstr KITTY_ESC_END = bstr0_lit("\033\\");
++static const bstr KITTY_ESC_CONT_MORE = bstr0_lit("\033_Gm=1;");
++static const bstr KITTY_ESC_CONT_LAST = bstr0_lit("\033_Gm=0;");
+ static const bstr KITTY_ESC_DELETE_ALL = bstr0_lit("\033_Ga=d;");
+ 
+ /* The envelope is the tmux in-band DCS: ESC P tmux; followed by the
+@@ -126,13 +128,14 @@ MP_PRINTF_ATTRIBUTE(3, 4)
+ static inline void append_asprintf_esc(struct priv *p, bstr *bs,
+                                        const char *fmt, ...)
+ {
++    void *tmp = talloc_new(NULL);
+     char *s;
+     va_list ap;
+     va_start(ap, fmt);
+-    av_vasprintf(&s, fmt, ap);
++    s = talloc_vasprintf(tmp, fmt, ap);
+     va_end(ap);
+     append_esc(p, bs, bstr0(s));
+-    av_free(s);
++    talloc_free(tmp);
+ }
+ 
+ /*
+@@ -356,19 +359,20 @@ static void flip_page(struct vo *vo)
+     append_asprintf_esc(p, cmd, TERM_ESC_GOTO_YX, p->top, p->left);
+ 
+     if (p->opts.use_shm) {
+-        char *s;
+-        av_asprintf(&s, KITTY_ESC_IMG_SHM,
+-                    vo->dwidth, vo->dheight, p->shm_path_b64);
++        void *tmp = talloc_new(NULL);
++        char *s = talloc_asprintf(tmp, KITTY_ESC_IMG_SHM,
++                                  vo->dwidth, vo->dheight, p->shm_path_b64);
+         append_kitty_dcs(p, cmd, bstr0(s), (bstr){NULL, 0});
+-        av_free(s);
++        talloc_free(tmp);
+     } else {
+         if (!p->output) {
+             terminal_swapchain_present(p->swapchain, cmd);
+             return;
+         }
+ 
+-        char *s;
+-        av_asprintf(&s, KITTY_ESC_IMG, vo->dwidth, vo->dheight);
++        void *tmp = talloc_new(NULL);
++        char *s = talloc_asprintf(tmp, KITTY_ESC_IMG,
++                                  vo->dwidth, vo->dheight);
+ 
+         int output_size = p->output_size - 1;
+         int offset = 0;
+@@ -379,14 +383,13 @@ static void flip_page(struct vo *vo)
+                              (bstr){p->output, chunk});
+             offset += chunk;
+         }
+-        av_free(s);
++        talloc_free(tmp);
+ 
+         while (offset < output_size) {
+             int chunk = MPMIN(4096, output_size - offset);
+             bool last = offset + chunk >= output_size;
+-            static const bstr cont_more = bstr0_lit("\033_Gm=1;");
+-            static const bstr cont_last = bstr0_lit("\033_Gm=0;");
+-            append_kitty_dcs(p, cmd, last ? cont_last : cont_more,
++            append_kitty_dcs(p, cmd, last ? KITTY_ESC_CONT_LAST
++                                          : KITTY_ESC_CONT_MORE,
+                              (bstr){p->output + offset, chunk});
+             offset += chunk;
+         }
+@@ -394,7 +397,7 @@ static void flip_page(struct vo *vo)
+         // When there is no data at all a single `m=0` packet keeps
+         // terminals happy.
+         if (output_size == 0) {
+-            append_kitty_dcs(p, cmd, bstr0_lit("\033_Gm=0;"),
++            append_kitty_dcs(p, cmd, KITTY_ESC_CONT_LAST,
+                              (bstr){NULL, 0});
+         }
+     }
+-- 
+2.55.0
+
+
+From b4069753a36f3ed80e2897f95aff493b265e7874 Mon Sep 17 00:00:00 2001
+From: TonyWu20 <tony.w21@gmail.com>
+Date: Sun, 25 Oct 2026 08:36:21 +0800
+Subject: [PATCH 3/3] vo_kitty: drop the NUL from the doubled ST literal
+
+The doubled ST is ESC ESC backslash, three bytes. The literal
+included its NUL terminator, which landed inside the envelope.
+---
+ video/out/vo_kitty.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/video/out/vo_kitty.c b/video/out/vo_kitty.c
+index c88f264..89a4ce6 100644
+--- a/video/out/vo_kitty.c
++++ b/video/out/vo_kitty.c
+@@ -161,7 +161,7 @@ static inline void append_kitty_dcs(struct priv *p, bstr *bs, bstr ctrl,
+     append_doubled(bs, ctrl);
+     if (data.len)
+         bstr_xappend(NULL, bs, data);
+-    bstr_xappend(NULL, bs, (bstr){"\033\033\\", 4});
++    bstr_xappend(NULL, bs, (bstr){"\033\033\\", 3});
+     bstr_xappend(NULL, bs, p->dcs_suffix);
+ }
+ 
+-- 
+2.55.0
+
