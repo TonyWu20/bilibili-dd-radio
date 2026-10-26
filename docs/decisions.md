@@ -48,6 +48,45 @@ and corrected.
   hardware-decode harness run, the CPU tolerance for N overlays,
   and the push of the pending commits (no GH_TOKEN on this host).
 
+## 2026-10-27 session 12 (video overlay: two user-reported failures, root-caused and fixed)
+
+- User report on the Mac smoke test, two problems:
+  1. pressing v on two rooms shows one overlay only.
+  2. base64 text is printed into the terminal and blocks the UI.
+- Problem 1, root cause: the kitty image DCS carried no image
+  id. The terminal auto-allocates a new id per frame, its image
+  table fills, and it evicts the other instances' images.
+  Fix (commit a33599d, patch regenerated against v0.41.0):
+  - vo_kitty reads the id from the KITTY_IMAGE_ID env var
+    (default 1) and carries a=T,i=<id>.
+  - Exit and reconfig delete only the own image (a=d,i=<id>)
+    instead of the global a=d, so stopping one overlay no
+    longer wipes the others.
+  - bdr assigns one stable id per room and passes it in the
+    spawn env.
+  - Verified: two instances in one pty stream i=1 and i=2 in
+    parallel, 226 headers each, per-instance deletes only,
+    zero global a=d.
+- Problem 2, root cause: bdr never passed
+  --vo-kitty-auto-multiplexer-passthrough=yes. Under tmux the
+  plain DCS stays in the pane and tmux consumes it, so the
+  envelope that the patched binary was built for never goes
+  out. bdr now passes the flag when it runs in tmux. The
+  patched binary under tmux emits the in-band envelope and
+  tmux forwards it to the client.
+- Outside tmux, a terminal without the kitty graphics protocol
+  prints the frame bytes as text. Toggling video on now shows
+  a status hint when TERM is not kitty or ghostty. This hint
+  is warn-only; it does not block the toggle.
+- Verified: the nix-built mpv-patched passes the tmux kit
+  (361 complete frames, clean pane) and the bdr overlay test
+  passes. The nix out path is
+  /nix/store/y83l0j8n2jdvsli2ss8ip2xh6llid368-mpv-patched-0.41.0.
+- Open, for the user: report which terminal ran the smoke
+  test, inside tmux or direct, and which mpv binary. The fix
+  is in, but the exact context of the base64 print is not
+  confirmed yet.
+
 ## 2026-10-25 session 10 (mpv fork: the tmux passthrough patch, verified headlessly)
 
 - The session 9 upstream candidate is now a built and tested
