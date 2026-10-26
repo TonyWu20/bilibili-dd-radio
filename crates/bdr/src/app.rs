@@ -128,6 +128,11 @@ pub struct App {
     following_tx: mpsc::UnboundedSender<FollowingMsg>,
     /// The user id, when a login is active.
     pub logged_in: Option<UID>,
+    /// True when bdr itself runs in a tmux pane. The video overlay
+    /// then asks the patched mpv for the tmux passthrough envelope.
+    in_tmux: bool,
+    /// The next free kitty image id. One id per overlay.
+    kitty_next_id: u32,
     api: Client,
 }
 
@@ -164,6 +169,8 @@ impl App {
             following_rx,
             following_tx,
             logged_in,
+            in_tmux: std::env::var("TMUX").is_ok(),
+            kitty_next_id: 1,
             api,
         }
     }
@@ -296,6 +303,17 @@ impl App {
         if std::env::var("BDR_TRACE").is_ok() {
             eprintln!("[bdr] toggle video={} room {}", room.video, idx);
         }
+        // Warn, do not block: a terminal without the kitty
+        // graphics protocol prints the frames as text.
+        if room.video && !self.in_tmux {
+            let term = std::env::var("TERM").unwrap_or_default();
+            let known = matches!(term.as_str(), "kitty" | "ghostty" | "kitty-ghostty");
+            if !known {
+                self.status = Some(format!(
+                    "video on, but TERM={term} may not speak the kitty graphics protocol; if base64 text appears, use ghostty or kitty (or tmux with the patched mpv)"
+                ));
+            }
+        }
         self.status = Some(format!(
             "{}: video {}",
             room.title(),
@@ -356,6 +374,7 @@ impl App {
         let desired: Vec<Option<(u32, u32)>> =
             (0..n).map(|i| self.desired_video_spawn(i)).collect();
         let out = self.respawn_tx.clone();
+        let mut next_id = self.kitty_next_id;
         for (i, room) in self.rooms.iter_mut().enumerate() {
             let desired = desired[i];
             if room.video_pending || desired == room.video_spawn {
@@ -367,6 +386,11 @@ impl App {
             let Some(id) = room.room_id else {
                 continue;
             };
+            // Assign a stable image id when the overlay comes up.
+            if desired.is_some() && room.kitty_id.is_none() {
+                room.kitty_id = Some(next_id);
+                next_id += 1;
+            }
             let config = MpvAudioConfig::builder()
                 .url(url)
                 .socket_path(crate::room::room_socket(id.get()))
@@ -376,7 +400,10 @@ impl App {
                 .video_left(desired.map(|g| g.1).unwrap_or(0))
                 .video_width_px(VIDEO_WIDTH_PX)
                 .video_height_px(VIDEO_HEIGHT_PX)
+                .image_id(room.kitty_id.unwrap_or(0))
+                .kitty_passthrough(self.in_tmux)
                 .build();
+            self.kitty_next_id = next_id;
             let input = room.input.clone();
             let value = out.clone();
             room.video_pending = true;
@@ -1171,5 +1198,24 @@ mod tests {
         // stays quiet without a runtime.
         app.sync_video();
         assert!(app.respawn_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn sync_assigns_distinct_kitty_ids() {
+        let mut app = App::new(api(), None, None, None);
+        let mut r1 = live_room("6");
+        r1.video = true;
+        let mut r2 = live_room("7");
+        r2.video = true;
+        app.rooms.push(r1);
+        app.rooms.push(r2);
+        app.last_width = 120;
+        app.last_height = 30;
+        app.sync_video();
+        assert_eq!(app.rooms[0].kitty_id, Some(1));
+        assert_eq!(app.rooms[1].kitty_id, Some(2));
+        // Both respawns are in flight.
+        assert!(app.rooms[0].video_pending);
+        assert!(app.rooms[1].video_pending);
     }
 }

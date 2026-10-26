@@ -1,11 +1,18 @@
 diff --git a/video/out/vo_kitty.c b/video/out/vo_kitty.c
-index 4ddeec4f7b..afe7be3537 100644
+index 4ddeec4f7b..cb24fe7edf 100644
 --- a/video/out/vo_kitty.c
 +++ b/video/out/vo_kitty.c
-@@ -82,8 +82,16 @@ static inline void write_str(unsigned char* s)
+@@ -77,13 +77,20 @@ static inline void write_str(unsigned char* s)
+     write_bstr(bstr0(s));
+ }
+ 
+-#define KITTY_ESC_IMG        "\033_Ga=T,f=24,s=%d,v=%d,C=1,q=2,m=1;"
+-#define KITTY_ESC_IMG_SHM    "\033_Ga=T,t=s,f=24,s=%d,v=%d,C=1,q=2,m=1;%s"
++#define KITTY_ESC_IMG        "\033_Ga=T,i=%d,f=24,s=%d,v=%d,C=1,q=2,m=1;"
++#define KITTY_ESC_IMG_SHM    "\033_Ga=T,i=%d,t=s,f=24,s=%d,v=%d,C=1,q=2,m=1;%s"
  #define KITTY_ESC_CONTINUE   "\033_Gm=%d;"
  static const bstr KITTY_ESC_END = bstr0_lit("\033\\");
- static const bstr KITTY_ESC_DELETE_ALL = bstr0_lit("\033_Ga=d;");
+-static const bstr KITTY_ESC_DELETE_ALL = bstr0_lit("\033_Ga=d;");
 -
 -static const bstr DCS_TMUX_PREFIX = bstr0_lit("\033Ptmux;\033");
 +static const bstr KITTY_ESC_CONT_MORE = bstr0_lit("\033_Gm=1;");
@@ -21,7 +28,30 @@ index 4ddeec4f7b..afe7be3537 100644
  static const bstr DCS_SCREEN_PREFIX = bstr0_lit("\033P\033");
  static const bstr DCS_SUFFIX = bstr0_lit("\033\\");
  
-@@ -121,34 +129,86 @@ static struct sigaction saved_sigaction = {0};
+@@ -106,6 +113,8 @@ struct priv {
+     bstr    dcs_prefix;
+     bstr    dcs_suffix;
+ 
++    int     image_id;
++
+     int left, top, width, height, cols, rows;
+     double display_par;
+ 
+@@ -115,40 +124,100 @@ struct priv {
+     struct mp_image *frame;
+     struct mp_sws_context *sws;
+ };
++/* Delete only this instance's image. A global a=d would wipe
++ * the overlays of other mpv instances in the same terminal. */
++static bstr kitty_delete_own(struct priv *p)
++{
++    char s[32];
++    int n = snprintf(s, sizeof(s), "\033_Ga=d,i=%d;", p->image_id);
++    return (bstr){s, (size_t)n};
++}
+ 
+ #if HAVE_POSIX
+ static struct sigaction saved_sigaction = {0};
  static bool resized;
  #endif
  
@@ -119,17 +149,17 @@ index 4ddeec4f7b..afe7be3537 100644
  static void close_shm(struct priv *p)
  {
  #if HAVE_POSIX_SHM
-@@ -222,8 +282,7 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
+@@ -222,8 +291,7 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
  
      vo->want_redraw = true;
  
 -    write_bstr_passthrough(p, KITTY_ESC_DELETE_ALL);
 -    write_bstr_passthrough(p, KITTY_ESC_END);
-+    write_kitty_dcs(p, KITTY_ESC_DELETE_ALL, (bstr){NULL, 0});
++    write_kitty_dcs(p, kitty_delete_own(p), (bstr){NULL, 0});
  
      if (p->opts.config_clear)
          write_str(TERM_ESC_CLEAR_SCREEN);
-@@ -346,43 +405,47 @@ static void flip_page(struct vo *vo)
+@@ -346,43 +414,48 @@ static void flip_page(struct vo *vo)
      p->cmd.len = 0;
  
      // Start with ESC to position the cursor
@@ -141,7 +171,7 @@ index 4ddeec4f7b..afe7be3537 100644
 -                                    p->width, p->height, p->shm_path_b64);
 -        append_passthrough(p, &p->cmd, KITTY_ESC_END);
 +        void *tmp = talloc_new(NULL);
-+        char *s = talloc_asprintf(tmp, KITTY_ESC_IMG_SHM,
++        char *s = talloc_asprintf(tmp, KITTY_ESC_IMG_SHM, p->image_id,
 +                                  p->width, p->height, p->shm_path_b64);
 +        append_kitty_dcs(p, &p->cmd, bstr0(s), (bstr){NULL, 0});
 +        talloc_free(tmp);
@@ -153,7 +183,8 @@ index 4ddeec4f7b..afe7be3537 100644
 -        append_asprintf_passthrough(p, &p->cmd, KITTY_ESC_IMG,
 -                                    p->width, p->height);
 +        void *tmp = talloc_new(NULL);
-+        char *s = talloc_asprintf(tmp, KITTY_ESC_IMG, p->width, p->height);
++        char *s = talloc_asprintf(tmp, KITTY_ESC_IMG, p->image_id,
++                                  p->width, p->height);
  
          int output_size = p->output_size - 1;
          int offset = 0;
@@ -199,12 +230,27 @@ index 4ddeec4f7b..afe7be3537 100644
          }
      }
  
-@@ -471,7 +534,7 @@ static void uninit(struct vo *vo)
+@@ -406,6 +479,14 @@ static int preinit(struct vo *vo)
+ {
+     struct priv *p = vo->priv;
+ 
++    // One image id per instance. Without a fixed id the terminal
++    // allocates a new id for every frame and evicts the images of
++    // the other instances once its table fills.
++    const char *id_env = getenv("KITTY_IMAGE_ID");
++    p->image_id = (id_env && id_env[0]) ? atoi(id_env) : 1;
++    if (p->image_id < 1)
++        p->image_id = 1;
++
+     p->sws = mp_sws_alloc(vo);
+     p->sws->log = vo->log;
+     mp_sws_enable_cmdline_opts(p->sws, vo->global);
+@@ -471,7 +552,7 @@ static void uninit(struct vo *vo)
      sigaction(SIGWINCH, &saved_sigaction, NULL);
  #endif
  
 -    write_bstr_passthrough(p, KITTY_ESC_DELETE_ALL);
-+    write_kitty_dcs(p, KITTY_ESC_DELETE_ALL, (bstr){NULL, 0});
++    write_kitty_dcs(p, kitty_delete_own(p), (bstr){NULL, 0});
  
      write_str(TERM_ESC_RESTORE_CURSOR);
      terminal_set_mouse_input(false);

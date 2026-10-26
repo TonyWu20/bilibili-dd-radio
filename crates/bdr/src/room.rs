@@ -92,6 +92,10 @@ pub struct RoomState {
     /// True while a respawn task runs for this room. The sync
     /// pass skips such rooms, so one toggle schedules one task.
     pub video_pending: bool,
+    /// The kitty image id this room's overlay owns. Assigned once,
+    /// when the overlay first turns on, and stable for the room's
+    /// whole life in the app.
+    pub kitty_id: Option<u32>,
     /// The stream URL, for resync after a remote reconnect.
     pub stream_url: Option<String>,
     /// Recent lines, oldest first.
@@ -119,6 +123,7 @@ impl RoomState {
             video: false,
             video_spawn: None,
             video_pending: false,
+            kitty_id: None,
             stream_url: None,
             lines: VecDeque::with_capacity(LINE_CAP),
             note: None,

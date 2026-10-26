@@ -56,6 +56,16 @@ pub struct MpvAudioConfig {
     /// The image height in pixels. Zero lets mpv pick.
     #[builder(default)]
     pub video_height_px: u32,
+    /// The kitty image id this instance owns. Zero uses the mpv
+    /// default. One id per instance keeps several overlays from
+    /// evicting each other in the terminal image table.
+    #[builder(default)]
+    pub image_id: u32,
+    /// Wrap the kitty DCS in the tmux in-band passthrough
+    /// envelope. The flag is effective only when the TMUX
+    /// environment variable is set.
+    #[builder(default)]
+    pub kitty_passthrough: bool,
 }
 
 /// One mpv instance, used for one room.
@@ -89,8 +99,12 @@ impl MpvAudio {
         } else {
             Stdio::null()
         };
-        let child = Command::new("mpv")
-            .args(build_args(&self.config))
+        let mut cmd = Command::new("mpv");
+        cmd.args(build_args(&self.config));
+        if self.config.video && self.config.image_id > 0 {
+            cmd.env("KITTY_IMAGE_ID", self.config.image_id.to_string());
+        }
+        let child = cmd
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(Stdio::null())
@@ -262,6 +276,9 @@ pub fn build_args(config: &MpvAudioConfig) -> Vec<String> {
         if config.video_height_px > 0 {
             args.push(format!("--vo-kitty-height={}", config.video_height_px));
         }
+        if config.kitty_passthrough {
+            args.push("--vo-kitty-auto-multiplexer-passthrough=yes".to_string());
+        }
     } else {
         args.push("--no-video".to_string());
     }
@@ -298,6 +315,7 @@ mod tests {
             .video_left(5)
             .video_width_px(720)
             .video_height_px(405)
+            .kitty_passthrough(true)
             .build();
         let args = build_args(&config);
         assert!(args.contains(&"--vo=kitty".to_string()));
@@ -309,8 +327,25 @@ mod tests {
         assert!(args.contains(&"--vo-kitty-left=5".to_string()));
         assert!(args.contains(&"--vo-kitty-width=720".to_string()));
         assert!(args.contains(&"--vo-kitty-height=405".to_string()));
+        assert!(args.contains(
+            &"--vo-kitty-auto-multiplexer-passthrough=yes".to_string()
+        ));
         assert!(!args.contains(&"--no-video".to_string()));
         assert_eq!(args.last().unwrap(), "u://x");
+    }
+
+    /// Without the flag the stock binary is left alone.
+    #[test]
+    fn test_args_no_passthrough_by_default() {
+        let config = MpvAudioConfig::builder()
+            .url("u://x".into())
+            .socket_path(PathBuf::from("/tmp/x.sock"))
+            .video(true)
+            .build();
+        let args = build_args(&config);
+        assert!(!args
+            .iter()
+            .any(|a| a.starts_with("--vo-kitty-auto-multiplexer-passthrough")));
     }
 
     /// Feed synthetic mpv IPC events through the reader and verify the

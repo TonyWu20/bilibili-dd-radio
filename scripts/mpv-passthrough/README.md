@@ -79,6 +79,10 @@ only happens on a nix flake update.
     # patched: the envelope must carry the image data (expect=pass)
     scripts/mpv-passthrough/test-tmux.sh "$(nix build .#packages.x86_64-linux.mpv-patched --print-out-paths | head -1)/bin/mpv" "$URL" pass
 
+bdr passes --vo-kitty-auto-multiplexer-passthrough=yes itself
+when it runs in tmux, and sets KITTY_IMAGE_ID per room. The kit
+passes the flag explicitly because it drives mpv directly.
+
 Pass criteria: at least one complete RGB24 frame in the captured
 envelopes, no base64 run of 100+ characters in the pane text, and
 at most one unterminated DCS as the last item of the capture.
@@ -87,6 +91,14 @@ at most one unterminated DCS as the last item of the capture.
 
 - The test uses a private tmux server on a temp socket. It never
   touches a user tmux session.
+- The patched binary also carries a per-instance kitty image id.
+  Without a fixed id the terminal allocates a new image id per
+  frame, fills its image table, and evicts the images of the
+  other mpv instances: several overlays do not coexist. The id
+  comes from the KITTY_IMAGE_ID environment variable (default 1).
+  The image DCS carries a=T,i=<id> and the instance deletes only
+  its own image on exit (a=d,i=<id>), so turning off one overlay
+  does not wipe the others.
 - The pane starts in `/`. A direnv-managed start directory makes
   the pane shell load the devshell menu, which eats the start
   command.
