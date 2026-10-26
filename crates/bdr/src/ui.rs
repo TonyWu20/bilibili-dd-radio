@@ -19,6 +19,7 @@ use crate::room::AudioState;
 pub fn draw<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), B::Error> {
     let size = terminal.size()?;
     app.last_width = size.width;
+    app.last_height = size.height;
     terminal.draw(|f| {
         let area = f.area();
         let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(area);
@@ -52,40 +53,31 @@ fn draw_grid(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let n = app.rooms.len();
-    let cols = App::grid_cols(n, area.width);
-    let rows = n.div_ceil(cols);
-
-    // Rows and cells split their span evenly. The last row and the
-    // last cell in a row take the rounding remainder.
-    let row_h = area.height / rows as u16;
-    let mut y = area.y;
-    for r in 0..rows {
-        let h = if r + 1 == rows {
-            (area.y + area.height).saturating_sub(y)
-        } else {
-            row_h
-        };
-        let row_cells = cols.min(n - r * cols);
-        let cell_w = area.width / row_cells as u16;
-        let mut x = area.x;
-        for c in 0..row_cells {
-            let w = if c + 1 == row_cells {
-                (area.x + area.width).saturating_sub(x)
-            } else {
-                cell_w
-            };
-            let cell = Rect::new(x, y, w, h);
-            let idx = r * cols + c;
-            let focused = idx == app.focused && app.view == View::Grid;
-            draw_cell(f, &app.rooms[idx], cell, focused);
-            x += w;
-        }
-        y += h;
+    let video = matches!(app.view, View::Grid | View::Prompt);
+    // The same cell rects the video geometry reads. They tile the
+    // area from its origin; the chunks start at the origin.
+    let cells = App::grid_cells(n, area.width, area.height);
+    for (idx, (cx, cy, cw, ch)) in cells.iter().enumerate() {
+        let cell = Rect::new(*cx, *cy, *cw, *ch);
+        let focused = idx == app.focused && app.view == View::Grid;
+        draw_cell(f, &app.rooms[idx], cell, focused, room_wants_video(&app.rooms[idx], video));
     }
 }
 
+/// The cell of a video room stays blank. The kitty image renders
+/// above the text.
+fn room_wants_video(room: &crate::room::RoomState, view_shows_grid: bool) -> bool {
+    room.video && view_shows_grid
+}
+
 /// One room cell.
-fn draw_cell(f: &mut Frame, room: &crate::room::RoomState, area: Rect, focused: bool) {
+fn draw_cell(
+    f: &mut Frame,
+    room: &crate::room::RoomState,
+    area: Rect,
+    focused: bool,
+    video: bool,
+) {
     let live = room
         .info
         .as_ref()
@@ -128,6 +120,17 @@ fn draw_cell(f: &mut Frame, room: &crate::room::RoomState, area: Rect, focused: 
     }
 
     let block = Block::bordered().title(crate::room::truncate(&room.input, 20));
+    if video {
+        // The image covers the cell interior. Only the border and
+        // the title stay visible.
+        let block = if focused {
+            block.style(Style::new().add_modifier(Modifier::BOLD))
+        } else {
+            block
+        };
+        f.render_widget(block, area);
+        return;
+    }
     if focused {
         f.render_widget(
             Paragraph::new(spans).block(block.style(Style::new().add_modifier(Modifier::BOLD))),
@@ -167,11 +170,13 @@ fn draw_danmaku(f: &mut Frame, app: &App, area: Rect) {
     for line in room.last_lines(60) {
         lines.push(Line::raw(line.short(60)));
     }
+    let video_tag = if room.video { " · video" } else { "" };
     let title = format!(
-        "danmaku: {} — {} [audio: {}]",
+        "danmaku: {} — {} [audio: {}{}]",
         room.title(),
         room.owner(),
-        audio_text(&room.audio_state, room.muted)
+        audio_text(&room.audio_state, room.muted),
+        video_tag
     );
     let para = Paragraph::new(lines).block(
         Block::bordered()
@@ -375,7 +380,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         .as_deref()
         .map(|s| format!(" {s}"))
         .unwrap_or_else(|| {
-            " q quit · g add · f follows · L login · m mute · d danmaku · x close · ? help ".into()
+            " q quit · g add · f follows · L login · m mute · v video · d danmaku · x close · ? help ".into()
         });
     if app.is_remote_audio() {
         status = format!("{status} · remote audio");

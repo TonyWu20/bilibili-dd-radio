@@ -37,6 +37,25 @@ pub struct MpvAudioConfig {
     /// Start muted.
     #[builder(default)]
     pub muted: bool,
+    /// Render video to the terminal through the kitty protocol.
+    ///
+    /// With video on, mpv writes the image frames to its stdout.
+    /// The caller must inherit stdout into the user terminal.
+    /// Without video, mpv runs audio-only and stdout is null.
+    #[builder(default)]
+    pub video: bool,
+    /// The top cell of the kitty image. Zero lets mpv pick.
+    #[builder(default)]
+    pub video_top: u32,
+    /// The left cell of the kitty image. Zero lets mpv pick.
+    #[builder(default)]
+    pub video_left: u32,
+    /// The image width in pixels. Zero lets mpv pick.
+    #[builder(default)]
+    pub video_width_px: u32,
+    /// The image height in pixels. Zero lets mpv pick.
+    #[builder(default)]
+    pub video_height_px: u32,
 }
 
 /// One mpv instance, used for one room.
@@ -62,14 +81,18 @@ impl MpvAudio {
         events: mpsc::UnboundedSender<AudioEvent>,
     ) -> Result<MpvHandle, Error> {
         let socket = self.config.socket_path.clone();
+        // The kitty image frames go to the user terminal. That is
+        // the parent stdout, inherited by the child. The audio-only
+        // path keeps a null stdout.
+        let stdout = if self.config.video {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        };
         let child = Command::new("mpv")
-            .arg("--no-video")
-            .arg("--really-quiet")
-            .arg("--idle=yes")
-            .arg(format!("--input-ipc-server={}", socket.display()))
-            .arg(&self.config.url)
+            .args(build_args(&self.config))
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(stdout)
             .stderr(Stdio::null())
             .spawn()
             .map_err(Error::Spawn)?;
@@ -204,9 +227,91 @@ where
     }
 }
 
+/// The mpv command line for one config. Split out so the flag
+/// choice is testable without spawning a process.
+pub fn build_args(config: &MpvAudioConfig) -> Vec<String> {
+    let mut args = vec![
+        "--really-quiet".to_string(),
+        "--idle=yes".to_string(),
+        "--no-input-terminal".to_string(),
+        format!("--input-ipc-server={}", config.socket_path.display()),
+    ];
+    if config.video {
+        // The kitty video out. Both overrides keep the image inside
+        // the app screen: no alt screen, no screen clear. The
+        // low-latency profile and quiet flags keep the terminal
+        // free of mpv text.
+        args.extend([
+            "--vo=kitty".into(),
+            "--vo-kitty-alt-screen=no".into(),
+            "--vo-kitty-config-clear=no".into(),
+            "--vo-kitty-use-shm=no".into(),
+            "--profile=low-latency".into(),
+            "--hwdec=auto-safe".into(),
+            "--vd-lavc-fast".into(),
+            "--msg-level=all=no".into(),
+            "--term-status-msg=".into(),
+            "--term-osd-bar=no".into(),
+            "--referrer=https://live.bilibili.com/".into(),
+            format!("--vo-kitty-top={}", config.video_top),
+            format!("--vo-kitty-left={}", config.video_left),
+        ]);
+        if config.video_width_px > 0 {
+            args.push(format!("--vo-kitty-width={}", config.video_width_px));
+        }
+        if config.video_height_px > 0 {
+            args.push(format!("--vo-kitty-height={}", config.video_height_px));
+        }
+    } else {
+        args.push("--no-video".to_string());
+    }
+    args.push(config.url.clone());
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The audio-only profile keeps the stock flag set.
+    #[test]
+    fn test_args_audio_only() {
+        let config = MpvAudioConfig::builder()
+            .url("u://x".into())
+            .socket_path(PathBuf::from("/tmp/x.sock"))
+            .build();
+        let args = build_args(&config);
+        assert!(args.contains(&"--no-video".to_string()));
+        assert!(args.contains(&"--no-input-terminal".to_string()));
+        assert!(!args.iter().any(|a| a.starts_with("--vo=kitty")));
+        assert_eq!(args.last().unwrap(), "u://x");
+    }
+
+    /// The video profile adds the kitty flags and the position.
+    #[test]
+    fn test_args_video() {
+        let config = MpvAudioConfig::builder()
+            .url("u://x".into())
+            .socket_path(PathBuf::from("/tmp/x.sock"))
+            .video(true)
+            .video_top(3)
+            .video_left(5)
+            .video_width_px(720)
+            .video_height_px(405)
+            .build();
+        let args = build_args(&config);
+        assert!(args.contains(&"--vo=kitty".to_string()));
+        assert!(args.contains(&"--no-input-terminal".to_string()));
+        assert!(args.contains(&"--vo-kitty-alt-screen=no".to_string()));
+        assert!(args.contains(&"--vo-kitty-config-clear=no".to_string()));
+        assert!(args.contains(&"--vo-kitty-use-shm=no".to_string()));
+        assert!(args.contains(&"--vo-kitty-top=3".to_string()));
+        assert!(args.contains(&"--vo-kitty-left=5".to_string()));
+        assert!(args.contains(&"--vo-kitty-width=720".to_string()));
+        assert!(args.contains(&"--vo-kitty-height=405".to_string()));
+        assert!(!args.contains(&"--no-video".to_string()));
+        assert_eq!(args.last().unwrap(), "u://x");
+    }
 
     /// Feed synthetic mpv IPC events through the reader and verify the
     /// mapped [`AudioEvent`]s.

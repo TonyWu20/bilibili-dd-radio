@@ -84,6 +84,14 @@ pub struct RoomState {
     pub audio_rx: Option<mpsc::UnboundedReceiver<AudioEvent>>,
     pub muted: bool,
     pub audio_state: AudioState,
+    /// The user video toggle for this room.
+    pub video: bool,
+    /// The (top, left) cell of the running video overlay.
+    /// None when the current mpv instance is audio-only.
+    pub video_spawn: Option<(u32, u32)>,
+    /// True while a respawn task runs for this room. The sync
+    /// pass skips such rooms, so one toggle schedules one task.
+    pub video_pending: bool,
     /// The stream URL, for resync after a remote reconnect.
     pub stream_url: Option<String>,
     /// Recent lines, oldest first.
@@ -108,6 +116,9 @@ impl RoomState {
             audio_rx: None,
             muted: false,
             audio_state: AudioState::Unknown,
+            video: false,
+            video_spawn: None,
+            video_pending: false,
             stream_url: None,
             lines: VecDeque::with_capacity(LINE_CAP),
             note: None,
@@ -216,6 +227,71 @@ impl RoomState {
     }
 }
 
+/// The Unix socket path of one room mpv instance.
+pub fn room_socket(room_id: u64) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("bdr-room-{room_id}.sock"))
+}
+
+/// Messages from an audio-or-video respawn.
+#[derive(Debug)]
+pub enum RespawnMsg {
+    /// The new instance is up. Attach it to the room.
+    Ready {
+        input: String,
+        handle: MpvHandle,
+        rx: mpsc::UnboundedReceiver<AudioEvent>,
+        /// The overlay cell of the new instance, or none for
+        /// audio-only.
+        video_spawn: Option<(u32, u32)>,
+    },
+    /// The respawn failed. The room keeps its old instance.
+    Failed { input: String, err: String },
+}
+
+/// Respawn one room mpv with a new profile (video on or off).
+///
+/// The caller owns the result channel. The old instance stops
+/// when the app swaps the handles in [`drain order`].
+pub async fn respawn_audio(
+    input: String,
+    config: bili_audio::MpvAudioConfig,
+    video_spawn: Option<(u32, u32)>,
+    out: mpsc::UnboundedSender<RespawnMsg>,
+) {
+    if std::env::var("BDR_TRACE").is_ok() {
+        eprintln!(
+            "[bdr] respawn start input={} video={}",
+            input,
+            config.video
+        );
+    }
+    let socket = config.socket_path.clone();
+    let _ = std::fs::remove_file(&socket);
+    let (tx, rx) = mpsc::unbounded_channel::<AudioEvent>();
+    match bili_audio::MpvAudio::from_config(config).start(tx).await {
+        Ok(handle) => {
+            if std::env::var("BDR_TRACE").is_ok() {
+                eprintln!("[bdr] respawn ok input={input}");
+            }
+            let _ = out.send(RespawnMsg::Ready {
+                input,
+                handle,
+                rx,
+                video_spawn,
+            });
+        }
+        Err(e) => {
+            if std::env::var("BDR_TRACE").is_ok() {
+                eprintln!("[bdr] respawn failed input={input}: {e}");
+            }
+            let _ = out.send(RespawnMsg::Failed {
+                input,
+                err: e.to_string(),
+            });
+        }
+    }
+}
+
 /// A room that is being opened.
 /// Messages from the open pipeline. The `Ready` variant is large, so
 /// keep it on the heap to avoid padding the small variants.
@@ -306,8 +382,7 @@ pub fn spawn_open(
                             }
                         }
                         None => {
-                            let socket =
-                                std::env::temp_dir().join(format!("bdr-room-{room_id}.sock"));
+                            let socket = room_socket(room_id.get());
                             let _ = std::fs::remove_file(&socket);
                             let (a_tx, a_rx) = mpsc::unbounded_channel::<AudioEvent>();
                             let config = MpvAudioConfig::builder()

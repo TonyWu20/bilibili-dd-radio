@@ -9,7 +9,8 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::auth;
-use crate::room::{OpenMsg, RoomState};
+use bili_audio::MpvAudioConfig;
+use crate::room::{OpenMsg, RespawnMsg, RoomState};
 use crate::ui;
 use tokio::sync::mpsc;
 
@@ -82,6 +83,14 @@ pub enum FollowingMsg {
     Failed(String),
 }
 
+/// The video overlay pixel size, verified in the session-7 terminal test.
+pub const VIDEO_WIDTH_PX: u32 = 720;
+/// The video overlay pixel height, verified in the session-7 terminal test.
+pub const VIDEO_HEIGHT_PX: u32 = 405;
+/// The overlay position in the danmaku view: the top-left corner.
+const DANMAKU_VIDEO_TOP: u32 = 1;
+const DANMAKU_VIDEO_LEFT: u32 = 1;
+
 /// The application state.
 pub struct App {
     pub rooms: Vec<RoomState>,
@@ -95,6 +104,11 @@ pub struct App {
     pub status: Option<String>,
     /// The terminal width of the last draw, for key navigation.
     pub last_width: u16,
+    /// The terminal height of the last draw, for the video geometry.
+    pub last_height: u16,
+    /// Results of the audio-or-video respawn tasks.
+    respawn_rx: mpsc::UnboundedReceiver<RespawnMsg>,
+    respawn_tx: mpsc::UnboundedSender<RespawnMsg>,
     /// Results of the async open pipeline.
     open_rx: mpsc::UnboundedReceiver<OpenMsg>,
     open_tx: mpsc::UnboundedSender<OpenMsg>,
@@ -126,6 +140,7 @@ impl App {
         logged_in: Option<UID>,
     ) -> Self {
         let (open_tx, open_rx) = mpsc::unbounded_channel();
+        let (respawn_tx, respawn_rx) = mpsc::unbounded_channel();
         let (login_tx, login_rx) = mpsc::unbounded_channel();
         let (following_tx, following_rx) = mpsc::unbounded_channel();
         Self {
@@ -135,6 +150,9 @@ impl App {
             prompt: String::new(),
             status: None,
             last_width: 80,
+            last_height: 24,
+            respawn_rx,
+            respawn_tx,
             open_rx,
             open_tx,
             remote,
@@ -160,6 +178,43 @@ impl App {
         let count_cap = rooms.clamp(1, 3);
         let width_cap = ((width as usize).saturating_sub(4)) / 28;
         count_cap.min(width_cap).max(1)
+    }
+
+    /// The (x, y, w, h) cell rect of every room in the current grid.
+    ///
+    /// The rects tile the given area from the origin. The last row
+    /// and the last cell of a row take the rounding remainder. The
+    /// grid drawing and the video geometry both read from this.
+    pub fn grid_cells(n: usize, width: u16, height: u16) -> Vec<(u16, u16, u16, u16)> {
+        if n == 0 || width == 0 || height == 0 {
+            return Vec::new();
+        }
+        let cols = Self::grid_cols(n, width) as u16;
+        let rows = (n as u16).div_ceil(cols);
+        let row_h = height / rows;
+        let mut cells = Vec::with_capacity(n);
+        let mut y = 0u16;
+        for r in 0..rows {
+            let h = if r + 1 == rows {
+                height.saturating_sub(y)
+            } else {
+                row_h
+            };
+            let row_cells = cols.min((n - (r as usize) * (cols as usize)) as u16);
+            let cell_w = width / row_cells;
+            let mut x = 0u16;
+            for c in 0..row_cells {
+                let w = if c + 1 == row_cells {
+                    width.saturating_sub(x)
+                } else {
+                    cell_w
+                };
+                cells.push((x, y, w, h));
+                x = x.saturating_add(w);
+            }
+            y = y.saturating_add(h);
+        }
+        cells
     }
 
     /// Request opening a room from user input.
@@ -213,6 +268,155 @@ impl App {
             title,
             if room.muted { "muted" } else { "unmuted" }
         ));
+    }
+
+    /// Toggle the video overlay of the focused room.
+    ///
+    /// The toggle is local-only: a remote audio runner has no
+    /// terminal, so video is unavailable there. The actual mpv
+    /// respawn happens in [`App::sync_video`] on the next loop
+    /// turn.
+    pub fn toggle_video(&mut self) {
+        if self.rooms.is_empty() {
+            return;
+        }
+        if self.is_remote_audio() {
+            self.status = Some("video needs local audio".into());
+            return;
+        }
+        let idx = self.focused.min(self.rooms.len() - 1);
+        let Some(room) = self.rooms.get_mut(idx) else {
+            return;
+        };
+        if room.stream_url.is_none() {
+            self.status = Some("no stream yet, video unavailable".into());
+            return;
+        }
+        room.video = !room.video;
+        if std::env::var("BDR_TRACE").is_ok() {
+            eprintln!("[bdr] toggle video={} room {}", room.video, idx);
+        }
+        self.status = Some(format!(
+            "{}: video {}",
+            room.title(),
+            if room.video { "on" } else { "off" }
+        ));
+    }
+
+    /// The desired overlay cell of one room in the current view.
+    ///
+    /// The grid and the prompt put the image in the room cell, one
+    /// cell inside the border. The danmaku view keeps only the
+    /// focused room overlay, at the corner. Every other view and
+    /// a remote audio runner turn the overlays off.
+    pub fn desired_video_spawn(&self, i: usize) -> Option<(u32, u32)> {
+        if self.is_remote_audio() {
+            return None;
+        }
+        let n = self.rooms.len();
+        let room = &self.rooms[i];
+        match self.view {
+            View::Grid | View::Prompt => {
+                if !room.video {
+                    return None;
+                }
+                let area_h = self.last_height.saturating_sub(1);
+                let cells = Self::grid_cells(n, self.last_width, area_h);
+                // The image sits one cell inside the border. Skip
+                // cells too small to hold an image.
+                let (x, y, w, h) = cells.get(i)?;
+                if *h < 3 || *w < 3 {
+                    None
+                } else {
+                    Some((y.saturating_add(1) as u32, x.saturating_add(1) as u32))
+                }
+            }
+            View::Danmaku => {
+                if i == self.focused.min(n - 1) {
+                    room.video.then_some((DANMAKU_VIDEO_TOP, DANMAKU_VIDEO_LEFT))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Respawn the room mpv instances that need a new profile.
+    ///
+    /// Call it after every draw, when the terminal size and the
+    /// view are settled. A changed desired cell respawns the
+    /// instance, so the image lands in the new position.
+    pub fn sync_video(&mut self) {
+        let n = self.rooms.len();
+        if n == 0 {
+            return;
+        }
+        // Read the desired cells before the mutation pass.
+        let desired: Vec<Option<(u32, u32)>> =
+            (0..n).map(|i| self.desired_video_spawn(i)).collect();
+        let out = self.respawn_tx.clone();
+        for (i, room) in self.rooms.iter_mut().enumerate() {
+            let desired = desired[i];
+            if room.video_pending || desired == room.video_spawn {
+                continue;
+            }
+            let Some(url) = room.stream_url.clone() else {
+                continue;
+            };
+            let Some(id) = room.room_id else {
+                continue;
+            };
+            let config = MpvAudioConfig::builder()
+                .url(url)
+                .socket_path(crate::room::room_socket(id.get()))
+                .muted(room.muted)
+                .video(desired.is_some())
+                .video_top(desired.map(|g| g.0).unwrap_or(0))
+                .video_left(desired.map(|g| g.1).unwrap_or(0))
+                .video_width_px(VIDEO_WIDTH_PX)
+                .video_height_px(VIDEO_HEIGHT_PX)
+                .build();
+            let input = room.input.clone();
+            let value = out.clone();
+            room.video_pending = true;
+            tokio::spawn(async move {
+                crate::room::respawn_audio(input, config, desired, value).await;
+            });
+        }
+    }
+
+    /// Drain the respawn results and swap the room handles.
+    pub fn drain_respawn(&mut self) {
+        while let Ok(msg) = self.respawn_rx.try_recv() {
+            match msg {
+                RespawnMsg::Ready {
+                    input,
+                    handle,
+                    rx,
+                    video_spawn,
+                } => {
+                    if let Some(room) = self.rooms.iter_mut().find(|r| r.input == input) {
+                        if let Some(mut old) = room.audio.take() {
+                            old.stop();
+                        }
+                        room.audio = Some(handle);
+                        room.audio_rx = Some(rx);
+                        room.video_spawn = video_spawn;
+                        room.video_pending = false;
+                    }
+                    // A missing room closed while the respawn ran.
+                    // Dropping the handle stops the new instance.
+                }
+                RespawnMsg::Failed { input, err } => {
+                    if let Some(room) = self.rooms.iter_mut().find(|r| r.input == input) {
+                        room.note = Some(format!("respawn: {err}"));
+                        room.video_pending = false;
+                    }
+                    self.status = Some(format!("respawn failed: {err}"));
+                }
+            }
+        }
     }
 
     /// True when audio plays on a remote runner.
@@ -553,6 +757,10 @@ impl App {
                     self.view = View::Grid;
                     true
                 }
+                crossterm::event::KeyCode::Char('v') => {
+                    self.toggle_video();
+                    true
+                }
                 _ => true,
             },
             View::Help => match key.code {
@@ -637,6 +845,10 @@ impl App {
             }
             KeyCode::Char('m') => {
                 self.toggle_mute();
+                true
+            }
+            KeyCode::Char('v') => {
+                self.toggle_video();
                 true
             }
             KeyCode::Char('d') => {
@@ -756,6 +968,8 @@ impl App {
             self.drain_following();
             self.tick_login();
             let _ = ui::draw(terminal, self);
+            self.drain_respawn();
+            self.sync_video();
         }
         if let Some(remote) = &self.remote {
             remote.send_quit();
@@ -806,6 +1020,7 @@ pub fn help_lines() -> Vec<&'static str> {
         "  g      add room (room id, short id, or URL)",
         "  x      close the focused room",
         "  m      mute / unmute the focused room's audio",
+        "  v      video on/off for the focused room (local audio)",
         "  d      show danmaku for the focused room",
         "  f      live rooms of followed livers",
         "  L      QR login (when logged out)",
@@ -816,6 +1031,7 @@ pub fn help_lines() -> Vec<&'static str> {
         "keys (prompt / help / danmaku views)",
         "  Esc    back to the grid",
         "  Enter  submit (prompt view)",
+        "  v      video on/off (danmaku view)",
         "",
         "keys (following view)",
         "  j/k or arrows  move the selection",
@@ -829,8 +1045,131 @@ pub fn help_lines() -> Vec<&'static str> {
         "",
         "audio: one mpv per room; the OS mixes them.",
         "Muting a room silences only that room.",
+        "video: v toggles the terminal video of the focused room.",
+        "The image lands in the room cell, top-left in the",
+        "danmaku view. A stopped video clears all images for",
+        "one frame while the other overlays resume.",
         "",
         "login: credentials live in",
         "~/.config/bilibili-dd-radio/credentials.toml",
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn api() -> bili_api::Client {
+        bili_api::Client::from_config(bili_api::ClientConfig::builder().build())
+    }
+
+    fn live_room(input: &str) -> RoomState {
+        let mut room = RoomState::pending(input.to_string());
+        room.resolved = true;
+        room.room_id = Some(bili_api::RoomID(1234));
+        room.info = Some(bili_api::RoomInfo {
+            room_id: bili_api::RoomID(1234),
+            short_id: 6,
+            uid: bili_api::UID(42),
+            title: "my stream".into(),
+            parent_area_name: String::new(),
+            live_status: bili_api::LiveStatus::LIVE,
+            online: 42,
+        });
+        room.stream_url = Some("u://x".into());
+        room
+    }
+
+    #[test]
+    fn toggle_video_flips_the_flag() {
+        let mut app = App::new(api(), None, None, None);
+        app.rooms.push(live_room("6"));
+        app.toggle_video();
+        assert!(app.rooms[0].video);
+        assert!(app
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("video on")));
+        app.toggle_video();
+        assert!(!app.rooms[0].video);
+    }
+
+    #[test]
+    fn toggle_video_needs_a_stream() {
+        let mut app = App::new(api(), None, None, None);
+        let mut room = live_room("6");
+        room.stream_url = None;
+        app.rooms.push(room);
+        app.toggle_video();
+        assert!(!app.rooms[0].video);
+        assert!(app
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("no stream")));
+    }
+
+    #[test]
+    fn grid_spawn_is_the_cell_inside_the_border() {
+        let mut app = App::new(api(), None, None, None);
+        app.rooms.push(live_room("6"));
+        app.rooms.push(live_room("7"));
+        app.last_width = 120;
+        app.last_height = 30;
+        // Two rooms, two columns: the first cell is the top-left
+        // half. The image sits one cell inside the border.
+        assert_eq!(app.desired_video_spawn(0), None);
+        app.rooms[0].video = true;
+        assert_eq!(app.desired_video_spawn(0), Some((1, 1)));
+        assert_eq!(app.desired_video_spawn(1), None);
+        app.rooms[1].video = true;
+        assert_eq!(app.desired_video_spawn(1), Some((1, 61)));
+        app.rooms[1].video = false;
+        assert_eq!(app.desired_video_spawn(1), None);
+    }
+
+    #[test]
+    fn danmaku_spawn_is_the_corner() {
+        let mut app = App::new(api(), None, None, None);
+        app.rooms.push(live_room("6"));
+        app.view = View::Danmaku;
+        app.rooms[0].video = true;
+        assert_eq!(app.desired_video_spawn(0), Some((DANMAKU_VIDEO_TOP, DANMAKU_VIDEO_LEFT)));
+    }
+
+    #[test]
+    fn unfocused_rooms_drop_the_spawn_in_danmaku() {
+        let mut app = App::new(api(), None, None, None);
+        app.rooms.push(live_room("6"));
+        app.rooms.push(live_room("7"));
+        app.view = View::Danmaku;
+        app.focused = 0;
+        app.rooms[1].video = true;
+        assert_eq!(app.desired_video_spawn(1), None);
+        assert_eq!(app.desired_video_spawn(0), None);
+        app.rooms[0].video = true;
+        assert_eq!(app.desired_video_spawn(0), Some((DANMAKU_VIDEO_TOP, DANMAKU_VIDEO_LEFT)));
+    }
+
+    #[test]
+    fn other_views_drop_the_spawn() {
+        let mut app = App::new(api(), None, None, None);
+        app.rooms.push(live_room("6"));
+        app.rooms[0].video = true;
+        app.view = View::Help;
+        assert_eq!(app.desired_video_spawn(0), None);
+        app.view = View::Login;
+        assert_eq!(app.desired_video_spawn(0), None);
+    }
+
+    #[test]
+    fn a_noop_sync_schedules_nothing() {
+        let mut app = App::new(api(), None, None, None);
+        app.rooms.push(live_room("6"));
+        app.last_width = 120;
+        app.last_height = 30;
+        // Nothing enabled, nothing spawned. The sync is a no-op and
+        // stays quiet without a runtime.
+        app.sync_video();
+        assert!(app.respawn_rx.try_recv().is_err());
+    }
 }
