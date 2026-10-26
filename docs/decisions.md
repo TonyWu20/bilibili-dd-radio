@@ -7,6 +7,47 @@ Date correction (2026-10-24): the entries written on 2026-10-12 and
 future dates. The dates were re-checked against the commit history
 and corrected.
 
+## 2026-10-26 session 11 (video overlay: implementation and headless test)
+
+- bdr now has the per-room togglable video overlay. v toggles the
+  focused room in the grid and the danmaku view (commit 13c1dd3).
+  Grid places the image one cell inside the focused cell. Danmaku
+  places it in the top-left corner. The toggle respawns the room
+  mpv with the kitty video driver and the position flags. The
+  video cell renders only its border. Remote audio rooms reject
+  the toggle.
+- Findings from the headless run:
+  - The mpv children steal the TUI keys. mpv reads the same pty
+    as bdr and its input handler swallows the keys. All mpv
+    spawns now pass --no-input-terminal.
+  - Respawn bursts: the sync pass rescheduled on every loop until
+    the first Ready landed. Several mpv instances raced one
+    socket. A video_pending flag on the room gates the schedule.
+  - An early v (before the stream URL lands) is rejected with
+    "no stream yet". The test waits for the "mpv start: Ok"
+    trace before pressing v.
+  - A pty made by a script cannot hold a window size on this
+    host: the slave TIOCGWINSZ fails with EIO and the master
+    TIOCSWINSZ does not stick. crossterm reads 0x0 and bdr
+    refuses to place the image. The test runs bdr in a private
+    tmux session (tmux new-session -x 120 -y 30 on a temp
+    socket). tmux owns the pty and its size.
+  - Frame bytes do not pass through tmux: the tmux parser
+    consumes the kitty DCS. The headless test checks the mpv
+    process table instead: spawn, pid, flags. Frame flow stays
+    in the standalone mpv test (360 complete frames) and the Mac
+    ghostty smoke test.
+- New script: scripts/video-overlay-test.sh. It drives bdr in a
+  private tmux server with send-keys and checks the process table
+  across grid, danmaku, and off. It passes: the kitty mpv spawns
+  in the grid, keeps the same pid in the danmaku view (no
+  respawn when the position is unchanged), and is gone when the
+  overlay turns off.
+- All 43 bdr unit tests pass. cargo clippy is clean.
+- Open, on the user side: the Mac ghostty smoke test, the M4
+  hardware-decode harness run, the CPU tolerance for N overlays,
+  and the push of the pending commits (no GH_TOKEN on this host).
+
 ## 2026-10-25 session 10 (mpv fork: the tmux passthrough patch, verified headlessly)
 
 - The session 9 upstream candidate is now a built and tested
